@@ -16,6 +16,7 @@ use core::fmt::{Debug, Formatter};
 use crossbeam_channel::TryRecvError;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::cell::RefCell;
+use std::println;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Barrier, Mutex, OnceLock};
 use thread_local::ThreadLocal;
@@ -29,7 +30,7 @@ use vello_common::strip::Strip;
 // TODO: Fine-tune this parameter.
 const COST_THRESHOLD: f32 = 5.0;
 
-type RenderTasksSender = crossbeam_channel::Sender<Vec<RenderTask>>;
+type RenderTasksSender = crossbeam_channel::Sender<(Vec<RenderTask>, bool)>;
 type CoarseCommandSender = ordered_channel::Sender<CoarseCommand>;
 type CoarseCommandReceiver = ordered_channel::Receiver<CoarseCommand>;
 
@@ -59,6 +60,11 @@ impl CoarseHandler {
     fn set_receiver(&self, receiver: CoarseCommandReceiver) {
         let mut inner = self.0.lock().unwrap();
         inner.0.1 = Some(receiver);
+    }
+    
+    fn with_wide<'a>(&self, func: Box<dyn FnOnce(&Wide) + 'a>) {
+        let inner = self.0.lock().unwrap();
+        func(&inner.0.0);
     }
 
     fn run_coarse(&self, abort_empty: bool) {
@@ -91,10 +97,13 @@ impl CoarseHandler {
                             return;
                         }
                     }
-                    TryRecvError::Disconnected => return,
+                    TryRecvError::Disconnected => {
+                        return
+                    },
                 },
             }
         }
+        
     }
 }
 
@@ -102,14 +111,14 @@ impl CoarseHandler {
 // to later clone it because the multi-threaded dispatcher needs owned access to the structs.
 // Figure out whether there is a good way of solving this problem.
 pub(crate) struct MultiThreadedDispatcher {
-    wide: Wide,
     thread_pool: ThreadPool,
     task_batch: Vec<RenderTask>,
     batch_cost: f32,
+    sent_batches: u32,
     task_sender: Option<RenderTasksSender>,
     workers: Arc<ThreadLocal<RefCell<Worker>>>,
-    result_receiver: Option<CoarseCommandReceiver>,
     alpha_storage: Arc<OnceLockAlphaStorage>,
+    coarse_handler: CoarseHandler,
     task_idx: usize,
     num_threads: u16,
     level: Level,
@@ -118,7 +127,7 @@ pub(crate) struct MultiThreadedDispatcher {
 
 impl MultiThreadedDispatcher {
     pub(crate) fn new(width: u16, height: u16, num_threads: u16, level: Level) -> Self {
-        let wide = Wide::new(width, height);
+        let coarse_handler = CoarseHandler::new(width, height);
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(num_threads as usize)
             .build()
@@ -127,6 +136,8 @@ impl MultiThreadedDispatcher {
         let workers = Arc::new(ThreadLocal::new());
         let task_batch = vec![];
 
+        let worker_coarse_handler = coarse_handler.clone();
+        
         {
             let alpha_storage = alpha_storage.clone();
             let thread_ids = Arc::new(AtomicU8::new(0));
@@ -140,6 +151,7 @@ impl MultiThreadedDispatcher {
                         height,
                         thread_ids.fetch_add(1, Ordering::SeqCst),
                         alpha_storage.clone(),
+                        worker_coarse_handler.clone(),
                         level,
                     ))
                 });
@@ -151,15 +163,15 @@ impl MultiThreadedDispatcher {
         let flushed = false;
 
         let mut dispatcher = Self {
-            wide,
+            coarse_handler,
             thread_pool,
             task_batch,
             batch_cost,
+            sent_batches: 0,
             task_idx: cmd_idx,
             flushed,
             workers,
             task_sender: None,
-            result_receiver: None,
             level,
             alpha_storage,
             num_threads,
@@ -176,7 +188,7 @@ impl MultiThreadedDispatcher {
         let workers = self.workers.clone();
 
         self.task_sender = Some(render_task_sender);
-        self.result_receiver = Some(coarse_command_receiver);
+        self.coarse_handler.set_receiver(coarse_command_receiver);
 
         self.thread_pool.spawn_broadcast(move |_| {
             let render_task_receiver = render_task_receiver.clone();
@@ -185,7 +197,7 @@ impl MultiThreadedDispatcher {
             let mut worker = worker.borrow_mut();
 
             while let Ok(tasks) = render_task_receiver.recv() {
-                worker.run_tasks(tasks, &mut coarse_command_sender);
+                worker.run_tasks(tasks.0, tasks.1, &mut coarse_command_sender);
             }
 
             // If we reach this point, it means the task_sender has been dropped by the main thread
@@ -224,56 +236,17 @@ impl MultiThreadedDispatcher {
     }
 
     fn send_pending_tasks(&mut self, tasks: Vec<RenderTask>) {
+        self.sent_batches += 1;
+        
+        let do_coarse = if self.sent_batches >= 10 {
+            self.sent_batches = 0;
+            true
+        }   else {
+            false
+        };
+        
         let task_sender = self.task_sender.as_mut().unwrap();
-        task_sender.send(tasks).unwrap();
-        self.run_coarse(true);
-    }
-
-    // Currently, we do coarse rasterization in two phases:
-    //
-    // The first phase is when we are still processing new draw commands from the client. After each
-    // command, we check whether there are already any generated strips, and if so we do coarse
-    // rasterization for them on the main thread. In this case, we want to abort in case there are
-    // no more path strips available to process.
-    //
-    // The second phase is when we are flushing, in which case even if the queue is empty, we only
-    // want to abort once all workers have closed the channel (and thus there won't be any more
-    // new strips that will be generated.
-    //
-    // This is why we have the `abort_empty`flag.
-    fn run_coarse(&mut self, abort_empty: bool) {
-        let result_receiver = self.result_receiver.as_mut().unwrap();
-
-        loop {
-            match result_receiver.try_recv() {
-                Ok(cmd) => match cmd {
-                    CoarseCommand::Render {
-                        thread_id,
-                        strips,
-                        fill_rule,
-                        paint,
-                    } => self.wide.generate(&strips, fill_rule, paint, thread_id),
-                    CoarseCommand::PushLayer {
-                        thread_id,
-                        clip_path,
-                        blend_mode,
-                        mask,
-                        opacity,
-                    } => self
-                        .wide
-                        .push_layer(clip_path, blend_mode, mask, opacity, thread_id),
-                    CoarseCommand::PopLayer => self.wide.pop_layer(),
-                },
-                Err(e) => match e {
-                    TryRecvError::Empty => {
-                        if abort_empty {
-                            return;
-                        }
-                    }
-                    TryRecvError::Disconnected => return,
-                },
-            }
-        }
+        task_sender.send((tasks, do_coarse)).unwrap();
     }
 
     fn rasterize_with<S: Simd, F: FineKernel<S>>(
@@ -284,47 +257,48 @@ impl MultiThreadedDispatcher {
         height: u16,
         encoded_paints: &[EncodedPaint],
     ) {
-        let mut buffer = Regions::new(width, height, buffer);
-        let fines = ThreadLocal::new();
-        let wide = &self.wide;
-        let alpha_slots = self.alpha_storage.slots();
+        self.coarse_handler.with_wide(Box::new(|wide| {
+            let mut buffer = Regions::new(width, height, buffer);
+            let fines = ThreadLocal::new();
+            let alpha_slots = self.alpha_storage.slots();
 
-        self.thread_pool.install(|| {
-            buffer.update_regions_par(|region| {
-                let x = region.x;
-                let y = region.y;
+            self.thread_pool.install(|| {
+                buffer.update_regions_par(|region| {
+                    let x = region.x;
+                    let y = region.y;
 
-                let mut fine = fines
-                    .get_or(|| RefCell::new(Fine::<S, F>::new(simd)))
-                    .borrow_mut();
+                    let mut fine = fines
+                        .get_or(|| RefCell::new(Fine::<S, F>::new(simd)))
+                        .borrow_mut();
 
-                let wtile = wide.get(x, y);
-                fine.set_coords(x, y);
+                    let wtile = wide.get(x, y);
+                    fine.set_coords(x, y);
 
-                fine.clear(wtile.bg);
-                for cmd in &wtile.cmds {
-                    let thread_idx = match cmd {
-                        Cmd::AlphaFill(a) => Some(a.thread_idx),
-                        Cmd::ClipStrip(a) => Some(a.thread_idx),
-                        _ => None,
-                    };
+                    fine.clear(wtile.bg);
+                    for cmd in &wtile.cmds {
+                        let thread_idx = match cmd {
+                            Cmd::AlphaFill(a) => Some(a.thread_idx),
+                            Cmd::ClipStrip(a) => Some(a.thread_idx),
+                            _ => None,
+                        };
 
-                    let alphas = thread_idx
-                        .and_then(|i| alpha_slots[i as usize].get())
-                        .map(|v| v.as_slice())
-                        .unwrap_or(&[]);
-                    fine.run_cmd(cmd, alphas, encoded_paints);
-                }
+                        let alphas = thread_idx
+                            .and_then(|i| alpha_slots[i as usize].get())
+                            .map(|v| v.as_slice())
+                            .unwrap_or(&[]);
+                        fine.run_cmd(cmd, alphas, encoded_paints);
+                    }
 
-                fine.pack(region);
+                    fine.pack(region);
+                });
             });
-        });
+        }))
     }
 }
 
 impl Dispatcher for MultiThreadedDispatcher {
     fn with_wide<'a>(&self, func: Box<dyn FnOnce(&Wide) + 'a>) {
-        func(&self.wide);
+        self.coarse_handler.with_wide(func);
     }
 
     fn fill_path(&mut self, path: &BezPath, fill_rule: Fill, transform: Affine, paint: Paint) {
@@ -379,13 +353,13 @@ impl Dispatcher for MultiThreadedDispatcher {
     }
 
     fn reset(&mut self) {
-        self.wide.reset();
+        self.coarse_handler.reset();
         self.task_batch.clear();
+        self.sent_batches = 0;
         self.batch_cost = 0.0;
         self.task_idx = 0;
         self.flushed = false;
         self.task_sender = None;
-        self.result_receiver = None;
         // TODO: We want to re-use the allocations of the storage somehow.
         self.alpha_storage = Arc::new(OnceLockAlphaStorage::new(self.num_threads));
 
@@ -413,8 +387,8 @@ impl Dispatcher for MultiThreadedDispatcher {
         let sender = core::mem::take(&mut self.task_sender);
         // Note that dropping the sender will signal to the workers that no more new paths
         // can arrive.
-        core::mem::drop(sender);
-        self.run_coarse(false);
+        drop(sender);
+        self.coarse_handler.run_coarse(false);
 
         self.flushed = true;
     }
@@ -598,6 +572,7 @@ enum CoarseCommand {
 #[derive(Debug)]
 struct Worker {
     strip_generator: StripGenerator,
+    coarse_handler: CoarseHandler,
     thread_id: u8,
     alpha_storage: Arc<OnceLockAlphaStorage>,
 }
@@ -608,12 +583,14 @@ impl Worker {
         height: u16,
         thread_id: u8,
         alpha_storage: Arc<OnceLockAlphaStorage>,
+        coarse_handler: CoarseHandler,
         level: Level,
     ) -> Self {
         let strip_generator = StripGenerator::new(width, height, level);
 
         Self {
             strip_generator,
+            coarse_handler,
             thread_id,
             alpha_storage,
         }
@@ -623,7 +600,7 @@ impl Worker {
         self.strip_generator.reset();
     }
 
-    fn run_tasks(&mut self, tasks: Vec<RenderTask>, result_sender: &mut CoarseCommandSender) {
+    fn run_tasks(&mut self, tasks: Vec<RenderTask>, do_coarse: bool, result_sender: &mut CoarseCommandSender) {
         for task in tasks {
             match task {
                 RenderTask::FillPath {
@@ -704,6 +681,10 @@ impl Worker {
                         .unwrap();
                 }
             }
+        }
+        
+        if do_coarse {
+            self.coarse_handler.run_coarse(true);
         }
     }
 
