@@ -16,6 +16,7 @@ use core::fmt::{Debug, Formatter};
 use crossbeam_channel::TryRecvError;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::cell::RefCell;
+use std::ops::DerefMut;
 use std::println;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Barrier, Mutex, OnceLock};
@@ -34,7 +35,10 @@ type RenderTasksSender = crossbeam_channel::Sender<(Vec<RenderTask>, bool)>;
 type CoarseCommandSender = ordered_channel::Sender<CoarseCommand>;
 type CoarseCommandReceiver = ordered_channel::Receiver<CoarseCommand>;
 
-struct CoarseHandlerInner((Wide, Option<CoarseCommandReceiver>));
+struct CoarseHandlerInner {
+    wide: Wide, 
+    receiver: Option<CoarseCommandReceiver>
+}
 
 #[derive(Clone)]
 struct CoarseHandler(Arc<Mutex<CoarseHandlerInner>>);
@@ -48,28 +52,30 @@ impl Debug for CoarseHandler {
 impl CoarseHandler {
     fn new(width: u16, height: u16) -> Self {
         let wide = Wide::new(width, height);
-        Self(Arc::new(Mutex::new(CoarseHandlerInner((wide, None)))))
+        Self(Arc::new(Mutex::new(CoarseHandlerInner { wide, receiver: None })))
     }
 
     fn reset(&self) {
         let mut inner = self.0.lock().unwrap();
-        inner.0.0.reset();
-        inner.0.1 = None;
+        inner.wide.reset();
+        inner.receiver = None;
     }
 
     fn set_receiver(&self, receiver: CoarseCommandReceiver) {
         let mut inner = self.0.lock().unwrap();
-        inner.0.1 = Some(receiver);
+        inner.receiver = Some(receiver);
     }
     
     fn with_wide<'a>(&self, func: Box<dyn FnOnce(&Wide) + 'a>) {
         let inner = self.0.lock().unwrap();
-        func(&inner.0.0);
+        func(&inner.wide);
     }
 
     fn run_coarse(&self, abort_empty: bool) {
-        let mut inner = self.0.lock().unwrap();
-        let (wide, receiver) = &mut inner.0;
+        let mut guard = self.0.lock().unwrap();
+        let inner = guard.deref_mut();
+        let wide = &mut inner.wide;
+        let receiver = &mut inner.receiver;
         let receiver = receiver.as_mut().unwrap();
 
         loop {
