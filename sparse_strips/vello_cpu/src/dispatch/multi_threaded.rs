@@ -17,7 +17,7 @@ use crossbeam_channel::TryRecvError;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Barrier, OnceLock};
+use std::sync::{Barrier, Mutex, OnceLock};
 use thread_local::ThreadLocal;
 use vello_common::coarse::{Cmd, Wide};
 use vello_common::encode::EncodedPaint;
@@ -32,6 +32,71 @@ const COST_THRESHOLD: f32 = 5.0;
 type RenderTasksSender = crossbeam_channel::Sender<Vec<RenderTask>>;
 type CoarseCommandSender = ordered_channel::Sender<CoarseCommand>;
 type CoarseCommandReceiver = ordered_channel::Receiver<CoarseCommand>;
+
+struct CoarseHandlerInner((Wide, Option<CoarseCommandReceiver>));
+
+#[derive(Clone)]
+struct CoarseHandler(Arc<Mutex<CoarseHandlerInner>>);
+
+impl Debug for CoarseHandler {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(f, "CoarseHandler {{ .. }}")
+    }
+}
+
+impl CoarseHandler {
+    fn new(width: u16, height: u16) -> Self {
+        let wide = Wide::new(width, height);
+        Self(Arc::new(Mutex::new(CoarseHandlerInner((wide, None)))))
+    }
+
+    fn reset(&self) {
+        let mut inner = self.0.lock().unwrap();
+        inner.0.0.reset();
+        inner.0.1 = None;
+    }
+
+    fn set_receiver(&self, receiver: CoarseCommandReceiver) {
+        let mut inner = self.0.lock().unwrap();
+        inner.0.1 = Some(receiver);
+    }
+
+    fn run_coarse(&self, abort_empty: bool) {
+        let mut inner = self.0.lock().unwrap();
+        let (wide, receiver) = &mut inner.0;
+        let receiver = receiver.as_mut().unwrap();
+
+        loop {
+            match receiver.try_recv() {
+                Ok(cmd) => match cmd {
+                    CoarseCommand::Render {
+                        thread_id,
+                        strips,
+                        fill_rule,
+                        paint,
+                    } => wide.generate(&strips, fill_rule, paint, thread_id),
+                    CoarseCommand::PushLayer {
+                        thread_id,
+                        clip_path,
+                        blend_mode,
+                        mask,
+                        opacity,
+                    } => wide
+                        .push_layer(clip_path, blend_mode, mask, opacity, thread_id),
+                    CoarseCommand::PopLayer => wide.pop_layer(),
+                },
+                Err(e) => match e {
+                    TryRecvError::Empty => {
+                        if abort_empty {
+                            return;
+                        }
+                    }
+                    TryRecvError::Disconnected => return,
+                },
+            }
+        }
+    }
+}
 
 // TODO: In many cases, we pass a reference to an owned path in vello_common/vello_cpu, only
 // to later clone it because the multi-threaded dispatcher needs owned access to the structs.
