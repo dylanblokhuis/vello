@@ -177,12 +177,12 @@ impl Wide {
     }
 
     /// Return a reference to the wide bands.
-    pub fn bands(&self) -> &[WideBand] {
+    pub fn bands(&self) -> &Vec<WideBand> {
         &self.bands
     }
 
     /// Return a mutable reference to the wide bands.
-    pub fn bands_mut(&mut self) -> &mut [WideBand] {
+    pub fn bands_mut(&mut self) -> &mut Vec<WideBand> {
         &mut self.bands
     }
 

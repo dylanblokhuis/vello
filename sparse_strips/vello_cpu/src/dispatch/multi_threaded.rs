@@ -19,7 +19,7 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Barrier, OnceLock};
 use thread_local::ThreadLocal;
-use vello_common::coarse::{Cmd, Wide};
+use vello_common::coarse::{Cmd, Wide, WideBand};
 use vello_common::encode::EncodedPaint;
 use vello_common::fearless_simd::{Fallback, Level, Simd};
 use vello_common::mask::Mask;
@@ -30,8 +30,8 @@ use vello_common::strip::Strip;
 const COST_THRESHOLD: f32 = 5.0;
 
 type RenderTasksSender = crossbeam_channel::Sender<Vec<RenderTask>>;
-type CoarseCommandSender = ordered_channel::Sender<CoarseCommand>;
-type CoarseCommandReceiver = ordered_channel::Receiver<CoarseCommand>;
+type CoarseCommandSender = ordered_channel::Sender<Arc<CoarseCommand>>;
+type CoarseCommandReceiver = ordered_channel::Receiver<Arc<CoarseCommand>>;
 
 // TODO: In many cases, we pass a reference to an owned path in vello_common/vello_cpu, only
 // to later clone it because the multi-threaded dispatcher needs owned access to the structs.
@@ -43,7 +43,6 @@ pub(crate) struct MultiThreadedDispatcher {
     batch_cost: f32,
     task_sender: Option<RenderTasksSender>,
     workers: Arc<ThreadLocal<RefCell<Worker>>>,
-    result_receiver: Option<CoarseCommandReceiver>,
     alpha_storage: Arc<OnceLockAlphaStorage>,
     task_idx: usize,
     num_threads: u16,
@@ -94,7 +93,6 @@ impl MultiThreadedDispatcher {
             flushed,
             workers,
             task_sender: None,
-            result_receiver: None,
             level,
             alpha_storage,
             num_threads,
@@ -106,16 +104,24 @@ impl MultiThreadedDispatcher {
     }
 
     fn init(&mut self) {
+        let mut senders = vec![];
+        let mut receivers = vec![];
         let (render_task_sender, render_task_receiver) = crossbeam_channel::unbounded();
-        let (coarse_command_sender, coarse_command_receiver) = ordered_channel::unbounded();
+        let wide_bands = std::mem::take(self.wide.bands_mut());
+        
+        for _ in 0..self.num_threads {
+            let (coarse_command_sender, coarse_command_receiver) = ordered_channel::unbounded();
+            senders.push(coarse_command_sender);
+            receivers.push(coarse_command_receiver);
+        }
+        
         let workers = self.workers.clone();
 
         self.task_sender = Some(render_task_sender);
-        self.result_receiver = Some(coarse_command_receiver);
 
         self.thread_pool.spawn_broadcast(move |_| {
             let render_task_receiver = render_task_receiver.clone();
-            let mut coarse_command_sender = coarse_command_sender.clone();
+            let mut coarse_command_senders = coarse_command_sender.clone();
             let worker = workers.get().unwrap();
             let mut worker = worker.borrow_mut();
 
@@ -164,18 +170,6 @@ impl MultiThreadedDispatcher {
         self.run_coarse(true);
     }
 
-    // Currently, we do coarse rasterization in two phases:
-    //
-    // The first phase is when we are still processing new draw commands from the client. After each
-    // command, we check whether there are already any generated strips, and if so we do coarse
-    // rasterization for them on the main thread. In this case, we want to abort in case there are
-    // no more path strips available to process.
-    //
-    // The second phase is when we are flushing, in which case even if the queue is empty, we only
-    // want to abort once all workers have closed the channel (and thus there won't be any more
-    // new strips that will be generated.
-    //
-    // This is why we have the `abort_empty`flag.
     fn run_coarse(&mut self, abort_empty: bool) {
         let result_receiver = self.result_receiver.as_mut().unwrap();
 
@@ -494,6 +488,9 @@ enum RenderTask {
     PopLayer {
         task_idx: usize,
     },
+    Flush {
+        task_idx: usize,
+    }
 }
 
 impl RenderTask {
@@ -519,6 +516,7 @@ impl RenderTask {
                 })
                 .unwrap_or(0.0),
             Self::PopLayer { .. } => 0.0,
+            Self::Flush => 0.0,
         }
     }
 }
@@ -538,9 +536,9 @@ enum CoarseCommand {
         opacity: f32,
     },
     PopLayer,
+    Flush
 }
 
-#[derive(Debug)]
 struct Worker {
     strip_generator: StripGenerator,
     thread_id: u8,
@@ -568,7 +566,12 @@ impl Worker {
         self.strip_generator.reset();
     }
 
-    fn run_tasks(&mut self, tasks: Vec<RenderTask>, result_sender: &mut CoarseCommandSender) {
+    fn run_tasks(&mut self, 
+                 tasks: Vec<RenderTask>, 
+                 result_sender: &[CoarseCommandSender],
+                 result_receiver: &mut CoarseCommandReceiver,
+                 wide_band: &mut WideBand
+    ) -> bool {
         for task in tasks {
             match task {
                 RenderTask::FillPath {
@@ -579,13 +582,17 @@ impl Worker {
                     task_idx,
                 } => {
                     let func = |strips: &[Strip]| {
-                        let coarse_command = CoarseCommand::Render {
+                        let coarse_command = Arc::new(CoarseCommand::Render {
                             thread_id: self.thread_id,
                             strips: strips.into(),
                             fill_rule,
                             paint,
-                        };
-                        result_sender.send(task_idx, coarse_command).unwrap();
+                        });
+                        
+                        for sender in result_sender {
+                            sender.send(task_idx, coarse_command.clone()).unwrap();
+                        }
+                        
                     };
 
                     self.strip_generator
@@ -599,13 +606,16 @@ impl Worker {
                     task_idx,
                 } => {
                     let func = |strips: &[Strip]| {
-                        let coarse_command = CoarseCommand::Render {
+                        let coarse_command = Arc::new(CoarseCommand::Render {
                             thread_id: self.thread_id,
                             strips: strips.into(),
                             fill_rule: Fill::NonZero,
                             paint,
-                        };
-                        result_sender.send(task_idx, coarse_command).unwrap();
+                        });
+
+                        for sender in result_sender {
+                            sender.send(task_idx, coarse_command.clone()).unwrap();
+                        }
                     };
 
                     self.strip_generator
@@ -633,23 +643,70 @@ impl Worker {
                         None
                     };
 
-                    let coarse_command = CoarseCommand::PushLayer {
+                    let coarse_command = Arc::new(CoarseCommand::PushLayer {
                         thread_id: self.thread_id,
                         clip_path: clip,
                         blend_mode,
                         mask,
                         opacity,
-                    };
+                    });
 
-                    result_sender.send(task_idx, coarse_command).unwrap();
+                    for sender in result_sender {
+                        sender.send(task_idx, coarse_command.clone()).unwrap();
+                    }
                 }
                 RenderTask::PopLayer { task_idx } => {
-                    result_sender
-                        .send(task_idx, CoarseCommand::PopLayer)
-                        .unwrap();
+                    let cmd = Arc::new(CoarseCommand::PopLayer);
+                    
+                    for sender in result_sender {
+                        sender.send(task_idx, cmd.clone()).unwrap();
+                    }
+                },
+                RenderTask::Flush { task_idx } => {
+                    let cmd = Arc::new(CoarseCommand::Flush);
+                    
+                    for sender in result_sender {
+                        sender.send(task_idx, cmd.clone()).unwrap();
+                    }
                 }
             }
         }
+        
+        self.run_coarse(result_receiver, wide_band)
+    }
+
+    fn run_coarse(&mut self, result_receiver: &mut CoarseCommandReceiver,
+                  wide_band: &mut WideBand) -> bool {
+        
+        while let Ok(cmd) = result_receiver.try_recv() {
+            match cmd.as_ref() {
+                CoarseCommand::Render {
+                    thread_id,
+                    strips,
+                    fill_rule,
+                    paint,
+                } => {
+                    wide_band.generate(&strips,* fill_rule, paint.clone(), *thread_id);
+                },
+                CoarseCommand::PushLayer {
+                    thread_id,
+                    clip_path,
+                    blend_mode,
+                    mask,
+                    opacity,
+                } => {
+                    wide_band.push_layer(clip_path.clone(), *blend_mode, mask.clone(), *opacity, *thread_id)
+                },
+                CoarseCommand::PopLayer => {
+                    wide_band.pop_layer()
+                },
+                CoarseCommand::Flush => {
+                    return true;
+                }
+            }
+        }
+        
+        false
     }
 
     fn place_alphas(&mut self) {
