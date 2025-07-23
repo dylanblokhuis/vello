@@ -53,7 +53,7 @@ pub(crate) struct MultiThreadedDispatcher {
 
 impl MultiThreadedDispatcher {
     pub(crate) fn new(width: u16, height: u16, num_threads: u16, level: Level) -> Self {
-        let wide = Wide::new(width, height, num_threads);
+        let wide = Wide::new(width, height, 0);
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(num_threads as usize)
             .build()
