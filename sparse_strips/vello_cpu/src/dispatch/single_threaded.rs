@@ -23,7 +23,7 @@ pub(crate) struct SingleThreadedDispatcher {
 
 impl SingleThreadedDispatcher {
     pub(crate) fn new(width: u16, height: u16, level: Level) -> Self {
-        let wide = Wide::new(width, height);
+        let wide = Wide::new(width, height, 0);
         let strip_generator = StripGenerator::new(width, height, level);
 
         Self {
@@ -69,7 +69,7 @@ impl Dispatcher for SingleThreadedDispatcher {
     fn fill_path(&mut self, path: &BezPath, fill_rule: Fill, transform: Affine, paint: Paint) {
         let wide = &mut self.wide;
 
-        let func = |strips| wide.generate(strips, fill_rule, paint, 0);
+        let func = |strips| wide.bands_mut()[0].generate(strips, fill_rule, paint, 0);
         self.strip_generator
             .generate_filled_path(path, fill_rule, transform, func);
     }
@@ -77,7 +77,7 @@ impl Dispatcher for SingleThreadedDispatcher {
     fn stroke_path(&mut self, path: &BezPath, stroke: &Stroke, transform: Affine, paint: Paint) {
         let wide = &mut self.wide;
 
-        let func = |strips| wide.generate(strips, Fill::NonZero, paint, 0);
+        let func = |strips| wide.bands_mut()[0].generate(strips, Fill::NonZero, paint, 0);
         self.strip_generator
             .generate_stroked_path(path, stroke, transform, func);
     }
@@ -104,11 +104,11 @@ impl Dispatcher for SingleThreadedDispatcher {
             None
         };
 
-        self.wide.push_layer(clip, blend_mode, mask, opacity, 0);
+        self.wide.bands_mut()[0].push_layer(clip, blend_mode, mask, opacity, 0);
     }
 
     fn pop_layer(&mut self) {
-        self.wide.pop_layer();
+        self.wide.bands_mut()[0].pop_layer();
     }
 
     fn reset(&mut self) {

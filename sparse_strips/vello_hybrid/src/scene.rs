@@ -66,7 +66,7 @@ impl Scene {
         Self {
             width,
             height,
-            wide: Wide::new(width, height),
+            wide: Wide::new(width, height, 0),
             alphas: vec![],
             level: Level::fallback(),
             line_buf: vec![],
@@ -190,7 +190,7 @@ impl Scene {
             unimplemented!()
         }
 
-        self.wide.push_layer(
+        self.wide.bands_mut()[0].push_layer(
             clip,
             BlendMode::new(Mix::Normal, Compose::SrcOver),
             None,
@@ -206,7 +206,7 @@ impl Scene {
 
     /// Pop the last pushed layer.
     pub fn pop_layer(&mut self) {
-        self.wide.pop_layer();
+        self.wide.bands_mut()[0].pop_layer();
     }
 
     /// Set the blend mode for subsequent rendering operations.
@@ -291,7 +291,7 @@ impl Scene {
     // Assumes that `line_buf` contains the flattened path.
     fn render_path(&mut self, fill_rule: Fill, paint: Paint) {
         self.make_strips(fill_rule);
-        self.wide.generate(&self.strip_buf, fill_rule, paint, 0);
+        self.wide.bands_mut()[0].generate(&self.strip_buf, fill_rule, paint, 0);
     }
 
     fn make_strips(&mut self, fill_rule: Fill) {

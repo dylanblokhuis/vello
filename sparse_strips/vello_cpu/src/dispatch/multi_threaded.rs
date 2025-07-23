@@ -53,7 +53,7 @@ pub(crate) struct MultiThreadedDispatcher {
 
 impl MultiThreadedDispatcher {
     pub(crate) fn new(width: u16, height: u16, num_threads: u16, level: Level) -> Self {
-        let wide = Wide::new(width, height);
+        let wide = Wide::new(width, height, num_threads);
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(num_threads as usize)
             .build()
@@ -187,17 +187,16 @@ impl MultiThreadedDispatcher {
                         strips,
                         fill_rule,
                         paint,
-                    } => self.wide.generate(&strips, fill_rule, paint, thread_id),
+                    } => self.wide.bands_mut()[0].generate(&strips, fill_rule, paint, thread_id),
                     CoarseCommand::PushLayer {
                         thread_id,
                         clip_path,
                         blend_mode,
                         mask,
                         opacity,
-                    } => self
-                        .wide
+                    } => self.wide.bands_mut()[0]
                         .push_layer(clip_path, blend_mode, mask, opacity, thread_id),
-                    CoarseCommand::PopLayer => self.wide.pop_layer(),
+                    CoarseCommand::PopLayer => self.wide.bands_mut()[0].pop_layer(),
                 },
                 Err(e) => match e {
                     TryRecvError::Empty => {

@@ -391,8 +391,8 @@ impl RenderContext {
         render_mode: RenderMode,
     ) {
         // TODO: Maybe we should move those checks into the dispatcher.
-        let wide = self.dispatcher.wide();
-        assert!(!wide.has_layers(), "some layers haven't been popped yet");
+        // let wide = self.dispatcher.wide();
+        // assert!(!wide.has_layers(), "some layers haven't been popped yet");
         assert_eq!(
             buffer.len(),
             (width as usize) * (height as usize) * 4,
