@@ -17,7 +17,8 @@ use crossbeam_channel::TryRecvError;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Barrier, OnceLock};
+use std::sync::{Barrier, Mutex, OnceLock};
+use std::{eprintln, println};
 use thread_local::ThreadLocal;
 use vello_common::coarse::{Cmd, Wide, WideBand};
 use vello_common::encode::EncodedPaint;
@@ -43,6 +44,8 @@ pub(crate) struct MultiThreadedDispatcher {
     batch_cost: f32,
     task_sender: Option<RenderTasksSender>,
     workers: Arc<ThreadLocal<RefCell<Worker>>>,
+    flush_barrier: Option<Arc<Barrier>>,
+    wide_bands: Option<Arc<Mutex<Vec<WideBand>>>>,
     alpha_storage: Arc<OnceLockAlphaStorage>,
     task_idx: usize,
     num_threads: u16,
@@ -92,6 +95,8 @@ impl MultiThreadedDispatcher {
             task_idx: cmd_idx,
             flushed,
             workers,
+            flush_barrier: None,
+            wide_bands: None,
             task_sender: None,
             level,
             alpha_storage,
@@ -107,26 +112,36 @@ impl MultiThreadedDispatcher {
         let mut senders = vec![];
         let mut receivers = vec![];
         let (render_task_sender, render_task_receiver) = crossbeam_channel::unbounded();
-        let wide_bands = std::mem::take(self.wide.bands_mut());
-        
+        let wide_bands = Arc::new(Mutex::new(std::mem::take(self.wide.bands_mut())));
+
         for _ in 0..self.num_threads {
             let (coarse_command_sender, coarse_command_receiver) = ordered_channel::unbounded();
             senders.push(coarse_command_sender);
-            receivers.push(coarse_command_receiver);
+            receivers.push(Mutex::new(coarse_command_receiver));
         }
-        
+
         let workers = self.workers.clone();
 
+        let flush_barrier = Arc::new(Barrier::new(usize::from(self.num_threads) + 1));
+        let t_barrier = flush_barrier.clone();
+
+        self.wide_bands = Some(wide_bands.clone());
         self.task_sender = Some(render_task_sender);
+        self.flush_barrier = Some(flush_barrier);
 
         self.thread_pool.spawn_broadcast(move |_| {
-            let render_task_receiver = render_task_receiver.clone();
-            let mut coarse_command_senders = coarse_command_sender.clone();
             let worker = workers.get().unwrap();
             let mut worker = worker.borrow_mut();
+            let render_task_receiver = render_task_receiver.clone();
+            let coarse_command_senders = senders.clone();
+            let mut wide_band =
+                std::mem::take(&mut wide_bands.lock().unwrap()[worker.thread_id as usize]);
+            let mut receiver = receivers[worker.thread_id as usize].lock().unwrap();
 
-            while let Ok(tasks) = render_task_receiver.recv() {
-                worker.run_tasks(tasks, &mut coarse_command_sender);
+            while !worker.run_coarse(&mut receiver, &mut wide_band) {
+                if let Ok(tasks) = render_task_receiver.recv() {
+                    worker.run_tasks(tasks, &coarse_command_senders);
+                }
             }
 
             // If we reach this point, it means the task_sender has been dropped by the main thread
@@ -136,7 +151,12 @@ impl MultiThreadedDispatcher {
             // have been placed, and it's safe to proceed.
             worker.place_alphas();
 
-            drop(coarse_command_sender);
+            let mut lock = wide_bands.lock().unwrap();
+            let borrowed_band = &mut lock[worker.thread_id as usize];
+            *borrowed_band = wide_band;
+            drop(lock);
+
+            t_barrier.wait();
         });
     }
 
@@ -167,52 +187,6 @@ impl MultiThreadedDispatcher {
     fn send_pending_tasks(&mut self, tasks: Vec<RenderTask>) {
         let task_sender = self.task_sender.as_mut().unwrap();
         task_sender.send(tasks).unwrap();
-        self.run_coarse(true);
-    }
-
-    fn run_coarse(&mut self, abort_empty: bool) {
-        let result_receiver = self.result_receiver.as_mut().unwrap();
-
-        loop {
-            match result_receiver.try_recv() {
-                Ok(cmd) => match cmd {
-                    CoarseCommand::Render {
-                        thread_id,
-                        strips,
-                        fill_rule,
-                        paint,
-                    } => {
-                        for band in self.wide.bands_mut() {
-                            band.generate(&strips, fill_rule, paint.clone(), thread_id)
-                        }
-                    },
-                    CoarseCommand::PushLayer {
-                        thread_id,
-                        clip_path,
-                        blend_mode,
-                        mask,
-                        opacity,
-                    } => {
-                        for band in self.wide.bands_mut() {
-                            band.push_layer(clip_path.clone(), blend_mode, mask.clone(), opacity, thread_id)
-                        }
-                    },
-                    CoarseCommand::PopLayer => {
-                        for band in self.wide.bands_mut() {
-                            band.pop_layer()
-                        }
-                    },
-                },
-                Err(e) => match e {
-                    TryRecvError::Empty => {
-                        if abort_empty {
-                            return;
-                        }
-                    }
-                    TryRecvError::Disconnected => return,
-                },
-            }
-        }
     }
 
     fn rasterize_with<S: Simd, F: FineKernel<S>>(
@@ -318,13 +292,18 @@ impl Dispatcher for MultiThreadedDispatcher {
     }
 
     fn reset(&mut self) {
+        if !self.flushed {
+            self.flush();
+        }
+
         self.wide.reset();
         self.task_batch.clear();
         self.batch_cost = 0.0;
         self.task_idx = 0;
         self.flushed = false;
         self.task_sender = None;
-        self.result_receiver = None;
+        self.flush_barrier = None;
+        self.wide_bands = None;
         // TODO: We want to re-use the allocations of the storage somehow.
         self.alpha_storage = Arc::new(OnceLockAlphaStorage::new(self.num_threads));
 
@@ -349,11 +328,18 @@ impl Dispatcher for MultiThreadedDispatcher {
 
     fn flush(&mut self) {
         self.flush_tasks();
+        let task_idx = self.bump_task_idx();
+        self.send_pending_tasks(vec![RenderTask::Flush { task_idx }]);
         let sender = core::mem::take(&mut self.task_sender);
         // Note that dropping the sender will signal to the workers that no more new paths
         // can arrive.
-        core::mem::drop(sender);
-        self.run_coarse(false);
+        drop(sender);
+
+        self.flush_barrier.as_mut().unwrap().wait();
+
+        let mut guard = self.wide_bands.as_ref().unwrap().lock().unwrap();
+        let wide_bands = std::mem::take(&mut *guard);
+        *self.wide.bands_mut() = wide_bands;
 
         self.flushed = true;
     }
@@ -490,7 +476,7 @@ enum RenderTask {
     },
     Flush {
         task_idx: usize,
-    }
+    },
 }
 
 impl RenderTask {
@@ -516,7 +502,7 @@ impl RenderTask {
                 })
                 .unwrap_or(0.0),
             Self::PopLayer { .. } => 0.0,
-            Self::Flush => 0.0,
+            Self::Flush { .. } => 0.0,
         }
     }
 }
@@ -536,7 +522,7 @@ enum CoarseCommand {
         opacity: f32,
     },
     PopLayer,
-    Flush
+    Flush,
 }
 
 struct Worker {
@@ -566,12 +552,7 @@ impl Worker {
         self.strip_generator.reset();
     }
 
-    fn run_tasks(&mut self, 
-                 tasks: Vec<RenderTask>, 
-                 result_sender: &[CoarseCommandSender],
-                 result_receiver: &mut CoarseCommandReceiver,
-                 wide_band: &mut WideBand
-    ) -> bool {
+    fn run_tasks(&mut self, tasks: Vec<RenderTask>, result_sender: &[CoarseCommandSender]) {
         for task in tasks {
             match task {
                 RenderTask::FillPath {
@@ -588,11 +569,10 @@ impl Worker {
                             fill_rule,
                             paint,
                         });
-                        
+
                         for sender in result_sender {
                             sender.send(task_idx, coarse_command.clone()).unwrap();
                         }
-                        
                     };
 
                     self.strip_generator
@@ -657,28 +637,28 @@ impl Worker {
                 }
                 RenderTask::PopLayer { task_idx } => {
                     let cmd = Arc::new(CoarseCommand::PopLayer);
-                    
+
                     for sender in result_sender {
                         sender.send(task_idx, cmd.clone()).unwrap();
                     }
-                },
+                }
                 RenderTask::Flush { task_idx } => {
                     let cmd = Arc::new(CoarseCommand::Flush);
-                    
+
                     for sender in result_sender {
                         sender.send(task_idx, cmd.clone()).unwrap();
                     }
                 }
             }
         }
-        
-        self.run_coarse(result_receiver, wide_band)
     }
 
-    fn run_coarse(&mut self, result_receiver: &mut CoarseCommandReceiver,
-                  wide_band: &mut WideBand) -> bool {
-        
-        while let Ok(cmd) = result_receiver.try_recv() {
+    fn run_coarse(
+        &mut self,
+        result_receiver: &mut CoarseCommandReceiver,
+        wide_band: &mut WideBand,
+    ) -> bool {
+        if let Ok(cmd) = result_receiver.try_recv() {
             match cmd.as_ref() {
                 CoarseCommand::Render {
                     thread_id,
@@ -686,26 +666,28 @@ impl Worker {
                     fill_rule,
                     paint,
                 } => {
-                    wide_band.generate(&strips,* fill_rule, paint.clone(), *thread_id);
-                },
+                    wide_band.generate(&strips, *fill_rule, paint.clone(), *thread_id);
+                }
                 CoarseCommand::PushLayer {
                     thread_id,
                     clip_path,
                     blend_mode,
                     mask,
                     opacity,
-                } => {
-                    wide_band.push_layer(clip_path.clone(), *blend_mode, mask.clone(), *opacity, *thread_id)
-                },
-                CoarseCommand::PopLayer => {
-                    wide_band.pop_layer()
-                },
+                } => wide_band.push_layer(
+                    clip_path.clone(),
+                    *blend_mode,
+                    mask.clone(),
+                    *opacity,
+                    *thread_id,
+                ),
+                CoarseCommand::PopLayer => wide_band.pop_layer(),
                 CoarseCommand::Flush => {
                     return true;
                 }
             }
         }
-        
+
         false
     }
 

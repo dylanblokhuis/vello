@@ -48,7 +48,7 @@ pub struct Wide {
 }
 
 /// A band wide tiles.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct WideBand {
     /// The start y-position of the band (in wide tile coordinates).
     start_y: u16,
@@ -136,7 +136,7 @@ impl Bbox {
 impl Wide {
     /// Create a new wide tile container.
     pub fn new(width: u16, height: u16, mut num_bands: u16) -> Self {
-        let num_bands = num_bands.max(1);
+        num_bands = num_bands.max(1);
 
         let height_tiles = height.div_ceil(Tile::HEIGHT);
         let height_tiles_per_band = height_tiles.div_ceil(num_bands);
@@ -245,7 +245,7 @@ impl WideBand {
     /// Get the wide tile at a certain index.
     ///
     /// Panics if the index is out-of-range.
-    fn get(&self, x: u16, y: u16) -> &WideTile {
+    pub fn get(&self, x: u16, y: u16) -> &WideTile {
         assert!(
             x < self.width_tiles() && y < self.height_tiles(),
             "attempted to access out-of-bounds wide tile"

@@ -296,7 +296,7 @@ pub(crate) fn vello_test_inner(attr: TokenStream, item: TokenStream) -> TokenStr
         multithreaded_fn_name_str,
         cpu_f32_tolerance_scalar,
         false,
-        3,
+        5,
         quote! {"fallback"},
         skip_cpu,
         quote! { RenderMode::OptimizeQuality },
