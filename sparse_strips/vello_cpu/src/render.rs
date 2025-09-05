@@ -268,6 +268,9 @@ impl RenderContext {
     /// Note that the mask, if provided, needs to have the same size as the render context. Otherwise,
     /// it will be ignored. In addition to that, the mask will not be affected by the current
     /// transformation matrix in place.
+    ///
+    /// Also note that a call to this method needs to be followed by a corresponding call 
+    /// to `pop` before calling `render_to_pixmap`.
     pub fn push_layer(
         &mut self,
         clip_path: Option<&BezPath>,
@@ -298,16 +301,25 @@ impl RenderContext {
     }
 
     /// Push a new clip layer.
+    ///
+    /// Also note that a call to this method needs to be followed by a corresponding call 
+    /// to `pop` before calling `render_to_pixmap`.
     pub fn push_clip_layer(&mut self, path: &BezPath) {
         self.push_layer(Some(path), None, None, None);
     }
 
     /// Push a new blend layer.
+    ///
+    /// Also note that a call to this method needs to be followed by a corresponding call 
+    /// to `pop` before calling `render_to_pixmap`.
     pub fn push_blend_layer(&mut self, blend_mode: BlendMode) {
         self.push_layer(None, Some(blend_mode), None, None);
     }
 
     /// Push a new opacity layer.
+    ///
+    /// Also note that a call to this method needs to be followed by a corresponding call 
+    /// to `pop` before calling `render_to_pixmap`.
     pub fn push_opacity_layer(&mut self, opacity: f32) {
         self.push_layer(None, None, Some(opacity), None);
     }
@@ -332,6 +344,9 @@ impl RenderContext {
     /// Note that the mask, if provided, needs to have the same size as the render context. Otherwise,
     /// it will be ignored. In addition to that, the mask will not be affected by the current
     /// transformation matrix in place.
+    ///
+    /// Also note that a call to this method needs to be followed by a corresponding call 
+    /// to `pop` before calling `render_to_pixmap`.
     pub fn push_mask_layer(&mut self, mask: Mask) {
         self.push_layer(None, None, None, Some(mask));
     }
