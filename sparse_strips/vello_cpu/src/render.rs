@@ -199,6 +199,7 @@ impl RenderContext {
             self.transform,
             paint,
             self.aliasing_threshold,
+            self.mask.clone()
         );
     }
 
