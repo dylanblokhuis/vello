@@ -3859,9 +3859,13 @@ dependencies = [
 name = "vello_bench"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
+ "clap",
  "criterion",
  "parley",
  "rand",
+ "serde",
+ "serde_json",
  "smallvec",
  "usvg",
  "vello_common",

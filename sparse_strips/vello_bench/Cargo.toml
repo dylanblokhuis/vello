@@ -10,20 +10,28 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-vello_common = { workspace = true }
-vello_cpu = { workspace = true }
-vello_dev_macros = { workspace = true }
+anyhow = "1.0.95"
+clap = { version = "4.5.27", features = ["derive"] }
 criterion = { workspace = true }
 parley = { version = "0.5.0", default-features = true }
 rand = { workspace = true }
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.133"
 smallvec = { workspace = true }
 usvg = { workspace = true }
+vello_common = { workspace = true }
+vello_cpu = { workspace = true, features = ["multithreading"] }
+vello_dev_macros = { workspace = true }
 
 [features]
 
 [[bench]]
 name = "main"
 harness = false
+
+[[bin]]
+name = "blend2d"
+path = "src/bin/blend2d.rs"
 
 [lints]
 workspace = true
