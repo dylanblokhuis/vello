@@ -26,7 +26,8 @@ struct Screen<'a> {
 struct Options {
     quantity: u32,
     sizes: Vec<String>,
-    repeat: u32,
+    #[serde(rename = "minRuns")]
+    min_runs: u32,
 }
 
 #[derive(Serialize)]
@@ -62,23 +63,34 @@ pub struct JsonWriter {
     screen_w: u32,
     screen_h: u32,
     quantity: u32,
-    repeat: u32,
+    min_runs: u32,
     sizes: Vec<u32>,
 }
 
 impl JsonWriter {
-    pub fn new(screen_w: u32, screen_h: u32, quantity: u32, repeat: u32, sizes: Vec<u32>) -> Self {
+    pub fn new(
+        screen_w: u32,
+        screen_h: u32,
+        quantity: u32,
+        min_runs: u32,
+        sizes: Vec<u32>,
+    ) -> Self {
         Self {
             runs: Vec::new(),
             screen_w,
             screen_h,
             quantity,
-            repeat,
+            min_runs,
             sizes,
         }
     }
 
-    pub fn push_run(&mut self, name: impl Into<String>, version: Option<String>, records: Vec<JsonRecord>) {
+    pub fn push_run(
+        &mut self,
+        name: impl Into<String>,
+        version: Option<String>,
+        records: Vec<JsonRecord>,
+    ) {
         self.runs.push((name.into(), version, records));
     }
 
@@ -105,12 +117,8 @@ impl JsonWriter {
             },
             options: Options {
                 quantity: self.quantity,
-                sizes: self
-                    .sizes
-                    .iter()
-                    .map(|s| format!("{}x{}", s, s))
-                    .collect(),
-                repeat: self.repeat,
+                sizes: self.sizes.iter().map(|s| format!("{}x{}", s, s)).collect(),
+                min_runs: self.min_runs,
             },
             runs: run_refs,
         };
@@ -132,11 +140,21 @@ fn os_name() -> &'static str {
     {
         "windows"
     }
-    #[cfg(all(not(target_os = "macos"), not(target_os = "linux"), not(target_os = "windows"), target_os = "ios"))]
+    #[cfg(all(
+        not(target_os = "macos"),
+        not(target_os = "linux"),
+        not(target_os = "windows"),
+        target_os = "ios"
+    ))]
     {
         "ios"
     }
-    #[cfg(all(not(target_os = "macos"), not(target_os = "linux"), not(target_os = "windows"), not(target_os = "ios")))]
+    #[cfg(all(
+        not(target_os = "macos"),
+        not(target_os = "linux"),
+        not(target_os = "windows"),
+        not(target_os = "ios")
+    ))]
     {
         "unknown"
     }

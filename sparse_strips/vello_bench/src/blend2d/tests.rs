@@ -3,65 +3,6 @@ use std::fmt;
 use vello_common::peniko::{BlendMode, Compose, Mix};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum StyleKind {
-    Solid,
-    LinearPad,
-    LinearRepeat,
-    LinearReflect,
-    RadialPad,
-    RadialRepeat,
-    RadialReflect,
-    Conic,
-    PatternNearest,
-    PatternBilinear,
-}
-
-impl StyleKind {
-    pub const ALL: [StyleKind; 10] = [
-        StyleKind::Solid,
-        StyleKind::LinearPad,
-        StyleKind::LinearRepeat,
-        StyleKind::LinearReflect,
-        StyleKind::RadialPad,
-        StyleKind::RadialRepeat,
-        StyleKind::RadialReflect,
-        StyleKind::Conic,
-        StyleKind::PatternNearest,
-        StyleKind::PatternBilinear,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            StyleKind::Solid => "Solid",
-            StyleKind::LinearPad => "Linear@Pad",
-            StyleKind::LinearRepeat => "Linear@Repeat",
-            StyleKind::LinearReflect => "Linear@Reflect",
-            StyleKind::RadialPad => "Radial@Pad",
-            StyleKind::RadialRepeat => "Radial@Repeat",
-            StyleKind::RadialReflect => "Radial@Reflect",
-            StyleKind::Conic => "Conic",
-            StyleKind::PatternNearest => "Pattern_NN",
-            StyleKind::PatternBilinear => "Pattern_BI",
-        }
-    }
-
-    pub fn default_subset() -> &'static [StyleKind] {
-        &[
-            StyleKind::Solid,
-            StyleKind::LinearPad,
-            StyleKind::RadialPad,
-            StyleKind::Conic,
-            StyleKind::PatternNearest,
-            StyleKind::PatternBilinear,
-        ]
-    }
-
-    pub fn is_pattern(self) -> bool {
-        matches!(self, StyleKind::PatternNearest | StyleKind::PatternBilinear)
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ShapeKind {
     Butterfly,
     Fish,
@@ -359,10 +300,6 @@ pub const COMP_OPS: [CompOpInfo; 29] = [
 ];
 
 pub const BENCH_SHAPE_SIZES: [u32; 6] = [8, 16, 32, 64, 128, 256];
-
-pub fn find_style(name: &str) -> Option<StyleKind> {
-    StyleKind::ALL.iter().copied().find(|style| style.name().eq_ignore_ascii_case(name))
-}
 
 pub fn find_test(name: &str) -> Option<TestKind> {
     TestKind::ALL

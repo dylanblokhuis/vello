@@ -1,26 +1,18 @@
 use std::time::Instant;
 
-use rand::{rngs::StdRng, RngCore, SeedableRng};
+use rand::{RngCore, SeedableRng, rngs::StdRng};
 use vello_common::{kurbo::Size, pixmap::Pixmap};
 
-use crate::blend2d::{
-    sprites::Sprites,
-    tests::{CompOpInfo, StyleKind, TestKind},
-};
+use crate::blend2d::tests::{CompOpInfo, TestKind};
 
 #[derive(Clone, Debug)]
 pub struct BenchParams {
     pub screen_size: Size,
-    pub style: StyleKind,
     pub test: TestKind,
     pub comp_op: &'static CompOpInfo,
     pub shape_size: u32,
     pub quantity: u32,
     pub stroke_width: f64,
-}
-
-pub struct BenchAssets<'a> {
-    pub sprites: &'a Sprites,
 }
 
 pub struct BackendRun {
@@ -29,13 +21,10 @@ pub struct BackendRun {
 
 pub trait Backend {
     fn name(&self) -> &str;
-    fn supports_style(&self, _style: StyleKind) -> bool {
-        true
-    }
     fn supports_comp_op(&self, comp: &CompOpInfo) -> bool {
         comp.mode.is_some()
     }
-    fn run(&mut self, assets: &BenchAssets<'_>, params: &BenchParams) -> BackendRun;
+    fn run(&mut self, params: &BenchParams) -> BackendRun;
     fn surface(&self) -> &Pixmap;
 }
 

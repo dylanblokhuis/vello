@@ -16,18 +16,12 @@ pub struct Blend2dArgs {
     /// Number of sizes from the default ladder (1..=6)
     #[arg(long = "size-count", default_value_t = 6, value_parser = clap::value_parser!(u32).range(1..=6))]
     pub size_count: u32,
-    /// Repeat count when measuring tests
-    #[arg(long, default_value_t = 1)]
-    pub repeat: u32,
-    /// Composition operator to benchmark ("all" or name)
-    #[arg(long = "comp-op")]
-    pub comp_op: Option<String>,
+    /// Minimum runs per benchmark (best result is used)
+    #[arg(long = "min-runs", default_value_t = 10)]
+    pub min_runs: u32,
     /// Explicit list of sizes to use (comma separated)
     #[arg(long = "sizes")]
     pub size_list: Option<String>,
-    /// Style filter (comma separated, supports -name shorthand)
-    #[arg(long = "styles")]
-    pub style_list: Option<String>,
     /// Test filter (comma separated, supports -name shorthand)
     #[arg(long = "tests")]
     pub test_list: Option<String>,
@@ -40,9 +34,6 @@ pub struct Blend2dArgs {
     /// Save overview image composed of all sizes per test
     #[arg(long = "save-overview")]
     pub save_overview: bool,
-    /// Enable additional styles (gradients and textures)
-    #[arg(long = "deep")]
-    pub deep: bool,
     /// Output JSON path
     #[arg(long = "json-out", default_value = "results.json")]
     pub json_path: String,

@@ -1,8 +1,8 @@
 #![allow(unreachable_pub)]
-pub mod cli;
 mod app;
 mod backend;
 mod backend_vello_cpu;
+pub mod cli;
 mod generated;
 mod json;
 mod shapes;

@@ -1,37 +1,34 @@
-use std::{
-    collections::{HashSet, VecDeque},
-    fs,
-    path::PathBuf,
-};
+use std::{collections::HashSet, fs, path::PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use vello_common::pixmap::Pixmap;
 use vello_cpu::peniko::color::PremulRgba8;
 
 use crate::blend2d::{
-    backend::{Backend, BenchAssets, BenchParams},
+    backend::{Backend, BenchParams},
     backend_vello_cpu,
     cli::Blend2dArgs,
     json::{JsonRecord, JsonWriter},
-    sprites::{self, Sprites},
-    tests::{self, CompOpInfo, StyleKind, TestKind, BENCH_SHAPE_SIZES, COMP_OPS},
+    sprites,
+    tests::{self, BENCH_SHAPE_SIZES, COMP_OPS, CompOpInfo, TestKind},
 };
 
+const SOLID_STYLE: &str = "Solid";
+const DEFAULT_COMP_OP: &CompOpInfo = &COMP_OPS[0];
+const TABLE_BORDER: &str = "+--------------------+-------------+---------------+----------+----------+----------+----------+----------+----------+";
+
 pub fn run(args: Blend2dArgs) -> Result<()> {
-    let sprites = Sprites::load()?;
     let config = BenchmarkConfig::from_args(args)?;
-    BenchRunner::new(config, sprites).run()
+    BenchRunner::new(config).run()
 }
 
 struct BenchmarkConfig {
     width: u32,
     height: u32,
     quantity: u32,
-    repeat: u32,
+    min_runs: u32,
     sizes: Vec<u32>,
-    styles: Vec<StyleKind>,
     tests: Vec<TestKind>,
-    comp_ops: Vec<&'static CompOpInfo>,
     threads: Vec<u16>,
     save_images: bool,
     save_overview: bool,
@@ -54,47 +51,24 @@ impl BenchmarkConfig {
             BENCH_SHAPE_SIZES[..count.min(BENCH_SHAPE_SIZES.len())].to_vec()
         };
 
-        let style_items: Vec<_> = tests::StyleKind::ALL
-            .iter()
-            .map(|style| (style.name(), *style))
-            .collect();
         let test_items: Vec<_> = tests::TestKind::ALL
             .iter()
             .map(|test| (test.name(), *test))
             .collect();
 
-        let styles = parse_toggle_list(
-            args.style_list.as_deref(),
-            &style_items,
-            if args.deep {
-            &tests::StyleKind::ALL
-            } else {
-                tests::StyleKind::default_subset()
-            },
+        let tests = parse_toggle_list(
+            args.test_list.as_deref(),
+            &test_items,
+            &tests::TestKind::ALL,
         )?;
-        let tests = parse_toggle_list(args.test_list.as_deref(), &test_items, &tests::TestKind::ALL)?;
-
-        let comp_ops: Vec<&'static CompOpInfo> = if let Some(op) = args.comp_op.as_deref() {
-            if op.eq_ignore_ascii_case("all") {
-                COMP_OPS.iter().collect()
-            } else {
-                let idx = tests::find_comp_op(op)
-                    .ok_or_else(|| anyhow!("Unknown composition operator '{op}'"))?;
-                vec![&COMP_OPS[idx]]
-            }
-        } else {
-            COMP_OPS.iter().collect()
-        };
 
         Ok(Self {
             width: args.width,
             height: args.height,
             quantity: args.quantity,
-            repeat: args.repeat.max(1),
+            min_runs: args.min_runs.max(1),
             sizes,
-            styles,
             tests,
-            comp_ops,
             threads,
             save_images: args.save_images,
             save_overview: args.save_overview,
@@ -105,20 +79,19 @@ impl BenchmarkConfig {
 
 struct BenchRunner {
     config: BenchmarkConfig,
-    sprites: Sprites,
     json: JsonWriter,
 }
 
 impl BenchRunner {
-    fn new(config: BenchmarkConfig, sprites: Sprites) -> Self {
+    fn new(config: BenchmarkConfig) -> Self {
         let json = JsonWriter::new(
             config.width,
             config.height,
             config.quantity,
-            config.repeat,
+            config.min_runs,
             config.sizes.clone(),
         );
-        Self { config, sprites, json }
+        Self { config, json }
     }
 
     fn run(mut self) -> Result<()> {
@@ -143,97 +116,93 @@ impl BenchRunner {
                 self.config.width as f64,
                 self.config.height as f64,
             ),
-            style: StyleKind::Solid,
             test: TestKind::FillRectA,
-            comp_op: &COMP_OPS[0],
+            comp_op: DEFAULT_COMP_OP,
             shape_size: self.config.sizes[0],
             quantity: self.config.quantity,
             stroke_width: 2.0,
         };
-        for comp in &self.config.comp_ops {
-            params.comp_op = comp;
-            if comp.mode.is_none() {
-                continue;
-            }
-            for &style in &self.config.styles {
-                if !backend.supports_style(style) {
-                    continue;
+
+        let mut totals = vec![0.0; self.config.sizes.len()];
+
+        println!("{}", TABLE_BORDER);
+        println!(
+            "|{:<20}| {:<11} | {:<13} | {:<9}| {:<9}| {:<9}| {:<9}| {:<9}| {:<9}|",
+            truncate(backend.name(), 20),
+            truncate(DEFAULT_COMP_OP.name, 11),
+            truncate(SOLID_STYLE, 13),
+            "8x8",
+            "16x16",
+            "32x32",
+            "64x64",
+            "128x128",
+            "256x256",
+        );
+        println!("{}", TABLE_BORDER);
+
+        for &test in &self.config.tests {
+            params.test = test;
+            let mut cpms_values = Vec::new();
+            let mut overview = self.maybe_create_overview();
+
+            for (index, &size) in self.config.sizes.iter().enumerate() {
+                params.shape_size = size;
+                let (duration, used_quantity) = run_single_test(
+                    backend,
+                    &mut params,
+                    self.config.quantity,
+                    self.config.min_runs,
+                );
+                let cpms = if duration == 0 {
+                    0.0
+                } else {
+                    used_quantity as f64 * 1000.0 / duration as f64
+                };
+                totals[index] += cpms;
+                cpms_values.push(format_cpms(cpms));
+                if let Some(ref mut pixmap) = overview {
+                    copy_into_overview(pixmap, index, backend.surface(), self.config.width);
                 }
-                params.style = style;
-                let mut total = vec![0.0; self.config.sizes.len()];
-                for &test in &self.config.tests {
-                    params.test = test;
-                    let mut cpms_values = Vec::new();
-                    let mut overview = self
-                        .maybe_create_overview()
-                        .map(|pixmap| (pixmap, 0usize));
-
-                    for (index, &size) in self.config.sizes.iter().enumerate() {
-                        params.shape_size = size;
-                        let (duration, used_quantity) = run_single_test(
-                            backend,
-                            BenchAssets {
-                                sprites: &self.sprites,
-                            },
-                            &mut params,
-                            self.config.quantity,
-                            self.config.repeat,
-                        );
-                        let cpms = if duration == 0 {
-                            0.0
-                        } else {
-                            used_quantity as f64 * 1000.0 / duration as f64
-                        };
-                        total[index] += cpms;
-                        cpms_values.push(format_cpms(cpms));
-                        if let Some((ref mut pixmap, _)) = overview {
-                            copy_into_overview(
-                                pixmap,
-                                index,
-                                backend.surface(),
-                                self.config.width,
-                            );
-                        }
-                        if self.config.save_images && index + 2 >= self.config.sizes.len() {
-                            let suffix = (b'A' + index as u8) as char;
-                            let file = format!(
-                                "images/{}-{}-{}-{}-{}.png",
-                                test.name(),
-                                comp.name,
-                                style.name(),
-                                suffix,
-                                backend.name()
-                            );
-                            save_surface(backend.surface(), &sanitize(&file))?;
-                        }
-                    }
-
-                    if let Some((pixmap, _)) = overview {
-                        let file = format!(
-                            "images/{}-{}-{}-{}.png",
-                            test.name(),
-                            comp.name,
-                            style.name(),
-                            backend.name()
-                        );
-                        save_surface(&pixmap, &sanitize(&file))?;
-                    }
-
-                    print_row(comp.name, style.name(), test.name(), &cpms_values);
-                    records.push(JsonRecord {
-                        test_name: test.name().to_string(),
-                        comp_op: comp.name.to_string(),
-                        style: style.name().to_string(),
-                        rcpms: cpms_values,
-                    });
+                if self.config.save_images && index + 2 >= self.config.sizes.len() {
+                    let suffix = (b'A' + index as u8) as char;
+                    let file = format!(
+                        "images/{}-{}-{}-{}-{}.png",
+                        test.name(),
+                        DEFAULT_COMP_OP.name,
+                        SOLID_STYLE,
+                        suffix,
+                        backend.name()
+                    );
+                    save_surface(backend.surface(), &sanitize(&file))?;
                 }
-
-                let total_strings: Vec<String> = total.iter().map(|value| format_cpms(*value)).collect();
-                print_row(comp.name, style.name(), "Total", &total_strings);
             }
+
+            if let Some(pixmap) = overview {
+                let file = format!(
+                    "images/{}-{}-{}-{}.png",
+                    test.name(),
+                    DEFAULT_COMP_OP.name,
+                    SOLID_STYLE,
+                    backend.name()
+                );
+                save_surface(&pixmap, &sanitize(&file))?;
+            }
+
+            print_row(test.name(), DEFAULT_COMP_OP.name, SOLID_STYLE, &cpms_values);
+            records.push(JsonRecord {
+                test_name: test.name().to_string(),
+                comp_op: DEFAULT_COMP_OP.name.to_string(),
+                style: SOLID_STYLE.to_string(),
+                rcpms: cpms_values,
+            });
         }
 
-        self.json.push_run(backend.name().to_string(), None, records);
+        let total_strings: Vec<String> = totals.iter().map(|value| format_cpms(*value)).collect();
+        print_row("Total", DEFAULT_COMP_OP.name, SOLID_STYLE, &total_strings);
+        println!("{}", TABLE_BORDER);
+
+        self.json
+            .push_run(backend.name().to_string(), None, records);
         Ok(())
     }
 
@@ -244,31 +213,42 @@ impl BenchRunner {
         let width = 1 + ((self.config.width + 1) * self.config.sizes.len() as u32);
         let height = self.config.height + 2;
         let mut pixmap = Pixmap::new(width as u16, height as u16);
-        sprites::clear_pixmap(&mut pixmap, PremulRgba8 { r: 0, g: 0, b: 0, a: 255 });
+        sprites::clear_pixmap(
+            &mut pixmap,
+            PremulRgba8 {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+        );
         Some(pixmap)
     }
 }
 
 fn run_single_test(
     backend: &mut dyn Backend,
-    assets: BenchAssets<'_>,
     params: &mut BenchParams,
     configured_quantity: u32,
-    repeat: u32,
+    min_runs: u32,
 ) -> (u64, u32) {
     const INITIAL_QUANTITY: u32 = 25;
     const MIN_DURATION_US: u64 = 1000;
-    const MAX_NO_IMPROVEMENT: u32 = 10;
 
-    let mut quantity = if configured_quantity == 0 { INITIAL_QUANTITY } else { configured_quantity };
+    let mut quantity = if configured_quantity == 0 {
+        INITIAL_QUANTITY
+    } else {
+        configured_quantity
+    };
     let mut best = u64::MAX;
     let mut attempts = 0;
-    let mut no_improvement = 0;
+
+    let required_runs = min_runs.max(1);
 
     if configured_quantity == 0 {
         loop {
             params.quantity = quantity;
-            let run = backend.run(&assets, params);
+            let run = backend.run(params);
             best = run.duration_us;
             if run.duration_us >= MIN_DURATION_US || quantity > 1_000_000 {
                 attempts = 1;
@@ -284,17 +264,11 @@ fn run_single_test(
         }
     }
 
-    while attempts < repeat {
+    while attempts < required_runs {
         params.quantity = quantity;
-        let run = backend.run(&assets, params);
+        let run = backend.run(params);
         if run.duration_us < best {
             best = run.duration_us;
-            no_improvement = 0;
-        } else {
-            no_improvement += 1;
-            if no_improvement >= MAX_NO_IMPROVEMENT {
-                break;
-            }
         }
         attempts += 1;
     }
@@ -380,10 +354,10 @@ fn format_cpms(value: f64) -> String {
     }
 }
 
-fn print_row(comp: &str, style: &str, test: &str, values: &[String]) {
-    let mut cols = VecDeque::from(values.to_vec());
+fn print_row(test: &str, comp: &str, style: &str, values: &[String]) {
+    let mut cols = values.to_vec();
     while cols.len() < 6 {
-        cols.push_back(String::from("-"));
+        cols.push(String::from("-"));
     }
     println!(
         "|{:<20}| {:<11} | {:<13} | {:<9}| {:<9}| {:<9}| {:<9}| {:<9}| {:<9}|",
@@ -420,6 +394,12 @@ fn save_surface(surface: &Pixmap, path: &str) -> Result<()> {
 fn sanitize(input: &str) -> String {
     input
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '/' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '/' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }

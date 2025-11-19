@@ -2,10 +2,7 @@ use std::sync::LazyLock;
 
 use vello_common::kurbo::{Affine, BezPath, PathEl, Point};
 
-use crate::blend2d::{
-    generated::shapes as data,
-    tests::ShapeKind,
-};
+use crate::blend2d::{generated::shapes as data, tests::ShapeKind};
 
 fn build_path(commands: &str, vertices: &[f64]) -> BezPath {
     let mut path = BezPath::new();
@@ -43,17 +40,17 @@ fn build_path(commands: &str, vertices: &[f64]) -> BezPath {
 }
 
 static BUTTERFLY: LazyLock<BezPath> = LazyLock::new(|| {
-    build_path(data::shapes::BUTTERFLY_COMMANDS, data::shapes::BUTTERFLY_VERTICES)
+    build_path(
+        data::shapes::BUTTERFLY_COMMANDS,
+        data::shapes::BUTTERFLY_VERTICES,
+    )
 });
-static FISH: LazyLock<BezPath> = LazyLock::new(|| {
-    build_path(data::shapes::FISH_COMMANDS, data::shapes::FISH_VERTICES)
-});
-static DRAGON: LazyLock<BezPath> = LazyLock::new(|| {
-    build_path(data::shapes::DRAGON_COMMANDS, data::shapes::DRAGON_VERTICES)
-});
-static WORLD: LazyLock<BezPath> = LazyLock::new(|| {
-    build_path(data::shapes::WORLD_COMMANDS, data::shapes::WORLD_VERTICES)
-});
+static FISH: LazyLock<BezPath> =
+    LazyLock::new(|| build_path(data::shapes::FISH_COMMANDS, data::shapes::FISH_VERTICES));
+static DRAGON: LazyLock<BezPath> =
+    LazyLock::new(|| build_path(data::shapes::DRAGON_COMMANDS, data::shapes::DRAGON_VERTICES));
+static WORLD: LazyLock<BezPath> =
+    LazyLock::new(|| build_path(data::shapes::WORLD_COMMANDS, data::shapes::WORLD_VERTICES));
 
 fn base_path(kind: ShapeKind) -> &'static BezPath {
     match kind {

@@ -7,13 +7,13 @@
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
+pub mod blend2d;
 pub mod data;
 pub mod fine;
 pub mod flatten;
 pub mod glyph;
 pub mod strip;
 pub mod tile;
-pub mod blend2d;
 
 pub(crate) const SEED: [u8; 32] = [0; 32];
 pub static DATA_PATH: LazyLock<PathBuf> =
