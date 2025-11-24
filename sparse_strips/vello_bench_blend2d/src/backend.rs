@@ -3,7 +3,7 @@ use std::time::Instant;
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use vello_common::{kurbo::Size, pixmap::Pixmap};
 
-use crate::blend2d::tests::{CompOpInfo, TestKind};
+use crate::tests::{CompOpInfo, TestKind};
 
 #[derive(Clone, Debug)]
 pub struct BenchParams {

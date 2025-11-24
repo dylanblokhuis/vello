@@ -8,7 +8,7 @@ use vello_cpu::{
     },
 };
 
-use crate::blend2d::{
+use crate::{
     backend::{Backend, BackendRun, BenchParams, BenchRandom, TimerGuard},
     shapes,
     tests::{RenderOp, ShapeKind, TestKind},
@@ -28,7 +28,6 @@ pub struct VelloBackend {
     coord_rng: BenchRandom,
     color_rng: BenchRandom,
     extra_rng: BenchRandom,
-    sprite_cursor: usize,
 }
 
 impl VelloBackend {
@@ -56,7 +55,6 @@ impl VelloBackend {
             coord_rng: BenchRandom::new(COORD_SEED),
             color_rng: BenchRandom::new(COLOR_SEED),
             extra_rng: BenchRandom::new(EXTRA_SEED),
-            sprite_cursor: 0,
         }
     }
 
@@ -64,13 +62,6 @@ impl VelloBackend {
         self.coord_rng.rewind();
         self.color_rng.rewind();
         self.extra_rng.rewind();
-        self.sprite_cursor = 0;
-    }
-
-    fn next_sprite_index(&mut self) -> usize {
-        let idx = self.sprite_cursor;
-        self.sprite_cursor = (self.sprite_cursor + 1) % 4;
-        idx
     }
 
     fn ensure_context(&mut self, screen_w: u32, screen_h: u32) {

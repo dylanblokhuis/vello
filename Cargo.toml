@@ -15,6 +15,7 @@ members = [
 
     "sparse_strips/vello_api",
     "sparse_strips/vello_bench",
+    "sparse_strips/vello_bench_blend2d",
     "sparse_strips/vello_common",
     "sparse_strips/vello_cpu",
     "sparse_strips/vello_cpu/examples/wasm_cpu",

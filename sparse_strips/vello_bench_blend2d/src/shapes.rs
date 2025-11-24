@@ -2,7 +2,7 @@ use std::sync::LazyLock;
 
 use vello_common::kurbo::{Affine, BezPath, PathEl, Point};
 
-use crate::blend2d::{generated::shapes as data, tests::ShapeKind};
+use crate::{generated_shapes as data, tests::ShapeKind};
 
 fn build_path(commands: &str, vertices: &[f64]) -> BezPath {
     let mut path = BezPath::new();
