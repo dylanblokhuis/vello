@@ -507,6 +507,55 @@ impl Renderer {
         Ok(())
     }
 
+    /// Renders a scene to the target texture by recording commands into an existing command encoder.
+    ///
+    /// This is like [`render_to_texture`](Self::render_to_texture), but instead of creating a
+    /// command encoder and submitting it to the queue, the render commands are recorded into the
+    /// provided `encoder`. The caller is responsible for finishing the encoder and submitting it
+    /// to a queue. This allows combining Vello rendering with other GPU work in a single command
+    /// buffer.
+    ///
+    /// The texture must have the same format and usage requirements as for `render_to_texture`:
+    /// [`wgpu::TextureFormat::Rgba8Unorm`] and [`wgpu::TextureUsages::STORAGE_BINDING`].
+    pub fn render_to_command_encoder(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        scene: &Scene,
+        texture: &TextureView,
+        params: &RenderParams,
+    ) -> Result<()> {
+        let (recording, target) =
+            render::render_full(scene, &mut self.resolver, &self.shaders, params);
+        let external_resources = [ExternalResource::Image(
+            *target.as_image().unwrap(),
+            texture,
+        )];
+        self.engine.run_recording_to_encoder(
+            device,
+            queue,
+            encoder,
+            &recording,
+            &external_resources,
+            "render_to_command_encoder",
+            #[cfg(feature = "wgpu-profiler")]
+            &mut self.profiler,
+        )?;
+        #[cfg(feature = "wgpu-profiler")]
+        {
+            self.profiler.end_frame().unwrap();
+            if let Some(result) = self
+                .profiler
+                .process_finished_frame(queue.get_timestamp_period())
+            {
+                self.profile_result = Some(result);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Overwrite `image` with `texture`.
     ///
     /// Most users should prefer [`register_texture`](Self::register_texture), which

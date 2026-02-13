@@ -375,6 +375,34 @@ impl WgpuEngine {
             label,
         });
         ShaderId(id)
+    }    
+
+    /// Runs the recording into the given command encoder without submitting.
+    ///
+    /// The encoder will have all Vello render commands recorded into it. The caller is
+    /// responsible for calling [`CommandEncoder::finish`] and submitting the resulting
+    /// command buffer to a queue. The `queue` is still required for buffer and texture
+    /// uploads that are issued during recording.
+    pub fn run_recording_to_encoder(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        encoder: &mut CommandEncoder,
+        recording: &Recording,
+        external_resources: &[ExternalResource<'_>],
+        label: &'static str,
+        #[cfg(feature = "wgpu-profiler")] profiler: &mut wgpu_profiler::GpuProfiler,
+    ) -> Result<()> {
+        self.run_recording_impl(
+            device,
+            queue,
+            encoder,
+            recording,
+            external_resources,
+            label,
+            #[cfg(feature = "wgpu-profiler")]
+            profiler,
+        )
     }
 
     pub fn run_recording(
@@ -386,14 +414,38 @@ impl WgpuEngine {
         label: &'static str,
         #[cfg(feature = "wgpu-profiler")] profiler: &mut wgpu_profiler::GpuProfiler,
     ) -> Result<()> {
+        let mut encoder =
+            device.create_command_encoder(&CommandEncoderDescriptor { label: Some(label) });
+        self.run_recording_impl(
+            device,
+            queue,
+            &mut encoder,
+            recording,
+            external_resources,
+            label,
+            #[cfg(feature = "wgpu-profiler")]
+            profiler,
+        )?;
+        queue.submit(Some(encoder.finish()));
+        Ok(())
+    }
+
+    fn run_recording_impl(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        mut encoder: &mut CommandEncoder,
+        recording: &Recording,
+        external_resources: &[ExternalResource<'_>],
+        _label: &'static str,
+        #[cfg(feature = "wgpu-profiler")] profiler: &mut wgpu_profiler::GpuProfiler,
+    ) -> Result<()> {
         let mut free_bufs: HashSet<ResourceId> = HashSet::default();
         let mut free_images: HashSet<ResourceId> = HashSet::default();
         let mut transient_map = TransientBindMap::new(external_resources);
 
-        let mut encoder =
-            device.create_command_encoder(&CommandEncoderDescriptor { label: Some(label) });
         #[cfg(feature = "wgpu-profiler")]
-        let query = profiler.begin_query(label, &mut encoder);
+        let query = profiler.begin_query(_label, encoder);
         for command in &recording.commands {
             match command {
                 Command::Upload(buf_proxy, bytes) => {
@@ -749,11 +801,10 @@ impl WgpuEngine {
             }
         }
         #[cfg(feature = "wgpu-profiler")]
-        profiler.end_query(&mut encoder, query);
+        profiler.end_query(encoder, query);
         // TODO: This only actually needs to happen once per frame, but run_recording happens two or three times
         #[cfg(feature = "wgpu-profiler")]
-        profiler.resolve_queries(&mut encoder);
-        queue.submit(Some(encoder.finish()));
+        profiler.resolve_queries(encoder);
         for id in free_bufs {
             if let Some(buf) = self.bind_map.buf_map.remove(&id)
                 && let MaterializedBuffer::Gpu(gpu_buf) = buf.buffer
