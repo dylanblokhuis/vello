@@ -963,7 +963,7 @@ mod tests {
             },
         ];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &[]);
     }
 
@@ -988,7 +988,7 @@ mod tests {
             },
         ];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, W | T),
             Tile::new(1, 0, 1, W | T),
@@ -1034,7 +1034,7 @@ mod tests {
             },
         ];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(1, 24, 0, B),
             Tile::new(2, 24, 1, B),
@@ -1057,7 +1057,7 @@ mod tests {
             },
         ];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, W | T | R),
             Tile::new(1, 0, 0, L | B),
@@ -1088,7 +1088,7 @@ mod tests {
             },
         ];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 23, 0, B),
             Tile::new(0, 24, 0, W | T | R),
@@ -1119,7 +1119,7 @@ mod tests {
             },
         ];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(24, 0, 0, R),
             Tile::new(23, 0, 1, R),
@@ -1146,7 +1146,7 @@ mod tests {
             },
         ];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, L),
             Tile::new(0, 0, 1, L | R),
@@ -1169,7 +1169,7 @@ mod tests {
             p1: Point { x: 90.0, y: -5.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &[]);
     }
 
@@ -1186,7 +1186,7 @@ mod tests {
             },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &[]);
     }
 
@@ -1197,7 +1197,7 @@ mod tests {
             p1: Point { x: 10.0, y: 10.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 2, 0, L | R),
             Tile::new(1, 2, 0, L | R),
@@ -1220,7 +1220,7 @@ mod tests {
             },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [Tile::new(23, 2, 0, R), Tile::new(24, 2, 0, L | R)];
 
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &expected);
@@ -1245,24 +1245,29 @@ mod tests {
             },
         ];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &[]);
     }
 
     #[test]
     fn vertical_path_on_the_right_of_viewport() {
+        const VIEWPORT_WIDTH: u16 = 10;
+        const VIEWPORT_HEIGHT: u16 = 10;
+
         let path = BezPath::from_svg("M261,0 L78848,0 L78848,4 L261,4 Z").unwrap();
         let mut line_buf = vec![];
         fill(
-            Level::try_detect().unwrap_or(Level::fallback()),
+            Level::try_detect().unwrap_or(Level::baseline()),
             &path,
             Affine::IDENTITY,
             &mut line_buf,
             &mut FlattenCtx::default(),
+            VIEWPORT_WIDTH,
+            VIEWPORT_HEIGHT,
         );
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
-        tiles.assert_tiles_match(&line_buf, 10, 10, &[]);
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
+        tiles.assert_tiles_match(&line_buf, VIEWPORT_WIDTH, VIEWPORT_HEIGHT, &[]);
     }
 
     #[test]
@@ -1282,7 +1287,7 @@ mod tests {
             },
         ];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, W | T),
             Tile::new(0, 0, 1, W | B | T),
@@ -1319,7 +1324,7 @@ mod tests {
             },
         ];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 24, 0, B),
             Tile::new(0, 23, 1, B),
@@ -1336,7 +1341,7 @@ mod tests {
             p1: Point { x: 2.0, y: -1.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [Tile::new(0, 0, 0, W | L | T)];
 
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &expected);
@@ -1355,7 +1360,7 @@ mod tests {
             },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [Tile::new(24, 24, 0, R | B)];
 
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &expected);
@@ -1371,7 +1376,7 @@ mod tests {
             p1: Point { x: 8.5, y: 1.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, R),
             Tile::new(1, 0, 0, R | L),
@@ -1388,7 +1393,7 @@ mod tests {
             p1: Point { x: 1.5, y: 1.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, R),
             Tile::new(1, 0, 0, R | L),
@@ -1405,7 +1410,7 @@ mod tests {
             p1: Point { x: 12.5, y: 1.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, R),
             Tile::new(1, 0, 0, R | L),
@@ -1423,7 +1428,7 @@ mod tests {
             p1: Point { x: 1.0, y: 8.5 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, B),
             Tile::new(0, 1, 0, W | T | B),
@@ -1440,7 +1445,7 @@ mod tests {
             p1: Point { x: 1.0, y: 13.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, B),
             Tile::new(0, 1, 0, W | T | B),
@@ -1458,7 +1463,7 @@ mod tests {
             p1: Point { x: 1.0, y: 1.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, B),
             Tile::new(0, 1, 0, W | T | B),
@@ -1476,7 +1481,7 @@ mod tests {
             p1: Point { x: 1.0, y: 1.5 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, B),
             Tile::new(0, 1, 0, W | T | B),
@@ -1494,7 +1499,7 @@ mod tests {
             p1: Point { x: 1.0, y: 8.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [Tile::new(0, 0, 0, B), Tile::new(0, 1, 0, W | T)];
 
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &expected);
@@ -1507,7 +1512,7 @@ mod tests {
             p1: Point { x: 1.0, y: 7.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [Tile::new(0, 0, 0, W | B), Tile::new(0, 1, 0, W | T)];
 
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &expected);
@@ -1523,7 +1528,7 @@ mod tests {
             p1: Point { x: 11.0, y: 9.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, R),
             Tile::new(1, 0, 0, L | B),
@@ -1542,7 +1547,7 @@ mod tests {
             p1: Point { x: 1.0, y: 1.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, R),
             Tile::new(1, 0, 0, L | B),
@@ -1561,7 +1566,7 @@ mod tests {
             p1: Point { x: 14.0, y: 6.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(2, 1, 0, R | B),
             Tile::new(3, 1, 0, L),
@@ -1580,7 +1585,7 @@ mod tests {
             p1: Point { x: 2.0, y: 11.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(2, 1, 0, R | B),
             Tile::new(3, 1, 0, L),
@@ -1605,7 +1610,7 @@ mod tests {
             },
         ];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [Tile::new(0, 0, 0, 0), Tile::new(0, 0, 1, 0)];
 
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &expected);
@@ -1618,7 +1623,7 @@ mod tests {
             p1: Point { x: 5.0, y: 3.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(1, 0, 0, L),
             Tile::new(0, 1, 0, R),
@@ -1635,7 +1640,7 @@ mod tests {
             p1: Point { x: 0.1, y: 0.1 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, R),
             Tile::new(1, 0, 0, L),
@@ -1652,7 +1657,7 @@ mod tests {
             p1: Point { x: 9.0, y: 9.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(1, 1, 0, R),
             Tile::new(2, 1, 0, L),
@@ -1669,7 +1674,7 @@ mod tests {
             p1: Point { x: 9.0, y: 5.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(1, 1, 0, R | B),
             Tile::new(2, 1, 0, L),
@@ -1686,7 +1691,7 @@ mod tests {
             p1: Point { x: 4.0, y: 4.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [Tile::new(0, 0, 0, W | R), Tile::new(1, 0, 0, L)];
 
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &expected);
@@ -1699,7 +1704,7 @@ mod tests {
             p1: Point { x: 4.0, y: 0.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [Tile::new(0, 0, 0, R), Tile::new(1, 0, 0, W | L)];
 
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &expected);
@@ -1712,7 +1717,7 @@ mod tests {
             p1: Point { x: 8.0, y: 8.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, W | R),
             Tile::new(1, 0, 0, L),
@@ -1730,7 +1735,7 @@ mod tests {
             p1: Point { x: 8.0, y: 0.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(1, 0, 0, R | L),
             Tile::new(2, 0, 0, W | L),
@@ -1748,7 +1753,7 @@ mod tests {
             p1: Point { x: 8.0, y: 2.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, R),
             Tile::new(1, 0, 0, R | L),
@@ -1765,7 +1770,7 @@ mod tests {
             p1: Point { x: 4.0, y: 0.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, R | B),
             Tile::new(1, 0, 0, W | L),
@@ -1782,7 +1787,7 @@ mod tests {
             p1: Point { x: 4.0, y: 8.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [
             Tile::new(0, 0, 0, W | B),
             Tile::new(0, 1, 0, W | R | T),
@@ -1802,7 +1807,7 @@ mod tests {
             p1: Point { x: 3.0, y: 3.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [Tile::new(0, 0, 0, 0)];
 
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &expected);
@@ -1815,7 +1820,7 @@ mod tests {
             p1: Point { x: 3.0, y: 1.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [Tile::new(0, 0, 0, 0)];
 
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &expected);
@@ -1828,7 +1833,7 @@ mod tests {
             p1: Point { x: 1.0, y: 3.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [Tile::new(0, 0, 0, W)];
 
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &expected);
@@ -1841,7 +1846,7 @@ mod tests {
             p1: Point { x: 4.0, y: 1.0 },
         }];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [Tile::new(0, 0, 0, R), Tile::new(1, 0, 0, L)];
 
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &expected);
@@ -1860,7 +1865,7 @@ mod tests {
             },
         ];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [Tile::new(0, 0, 0, 0), Tile::new(0, 0, 1, 0)];
 
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &expected);
@@ -1879,7 +1884,7 @@ mod tests {
             },
         ];
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         let expected = [Tile::new(0, 0, 0, W), Tile::new(0, 0, 1, W)];
 
         tiles.assert_tiles_match(&lines, VIEW_DIM, VIEW_DIM, &expected);
@@ -1896,7 +1901,7 @@ mod tests {
             p1: Point { x: 224.0, y: 388.0 },
         };
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         tiles.make_tiles_msaa(&[line], 600, 600);
         tiles.make_tiles_analytic_aa(&[line], 600, 600);
     }
@@ -1915,7 +1920,7 @@ mod tests {
             },
         };
 
-        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::fallback()));
+        let mut tiles = Tiles::new(Level::try_detect().unwrap_or(Level::baseline()));
         tiles.make_tiles_analytic_aa(&[line], 200, 100);
         tiles.make_tiles_msaa(&[line], 200, 100);
     }
@@ -1923,7 +1928,7 @@ mod tests {
     #[test]
     fn sort_test() {
         let mut lines = vec![];
-        let mut tiles = Tiles::new(Level::fallback());
+        let mut tiles = Tiles::new(Level::baseline());
 
         let step = 4.0;
         let mut y = F_V_DIM - 10.0;

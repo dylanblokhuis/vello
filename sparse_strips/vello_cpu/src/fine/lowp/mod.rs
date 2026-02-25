@@ -14,11 +14,12 @@ mod image;
 
 use crate::filter::filter_lowp;
 use crate::fine::lowp::image::{BilinearImagePainter, PlainBilinearImagePainter};
-use crate::fine::{COLOR_COMPONENTS, Painter, SCRATCH_BUF_SIZE};
+use crate::fine::{COLOR_COMPONENTS, Painter, SCRATCH_BUF_SIZE, Splat4thExt};
 use crate::fine::{FineKernel, highp, u8_to_f32};
 use crate::layer_manager::LayerManager;
 use crate::peniko::BlendMode;
 use crate::region::Region;
+use crate::util::NormalizedMulExt;
 use crate::util::scalar::div_255;
 use bytemuck::cast_slice;
 use core::iter;
@@ -28,7 +29,7 @@ use vello_common::fearless_simd::*;
 use vello_common::filter_effects::Filter;
 use vello_common::kurbo::Affine;
 use vello_common::mask::Mask;
-use vello_common::paint::PremulColor;
+use vello_common::paint::{PremulColor, Tint, TintMode};
 use vello_common::pixmap::Pixmap;
 use vello_common::tile::Tile;
 use vello_common::util::{Div255Ext, f32_to_u8};
@@ -193,6 +194,36 @@ impl<S: Simd> FineKernel<S> for U8Kernel {
     #[inline(always)]
     fn apply_painter<'a>(_: S, dest: &mut [Self::Numeric], mut painter: impl Painter + 'a) {
         painter.paint_u8(dest);
+    }
+
+    #[inline(always)]
+    fn apply_tint(simd: S, dest: &mut [Self::Numeric], tint: &Tint) {
+        let premul = tint.color.premultiply();
+        let [r, g, b, a] = premul.components;
+        let to_u8 = |v: f32| (v * 255.0 + 0.5) as u8;
+        let color = u32::from_ne_bytes([to_u8(r), to_u8(g), to_u8(b), to_u8(a)]);
+        let tint_v = u32x8::block_splat(u32x4::splat(simd, color)).to_bytes();
+
+        simd.vectorize(
+            #[inline(always)]
+            || match tint.mode {
+                TintMode::AlphaMask => {
+                    for chunk in dest.chunks_exact_mut(32) {
+                        let pixel = u8x32::from_slice(simd, chunk);
+                        let alphas = pixel.splat_4th();
+                        let tinted = tint_v.normalized_mul(alphas);
+                        chunk.copy_from_slice(tinted.as_slice());
+                    }
+                }
+                TintMode::Multiply => {
+                    for chunk in dest.chunks_exact_mut(32) {
+                        let pixel = u8x32::from_slice(simd, chunk);
+                        let tinted = pixel.normalized_mul(tint_v);
+                        chunk.copy_from_slice(tinted.as_slice());
+                    }
+                }
+            },
+        );
     }
 
     /// Composites a solid color onto a buffer using alpha blending.
@@ -550,9 +581,9 @@ fn mix<S: Simd>(src_c: u8x32<S>, bg_c: u8x32<S>, blend_mode: BlendMode) -> u8x32
 
     let to_u8 = |val1: f32x16<S>, val2: f32x16<S>| {
         let val1 =
-            f32_to_u8(f32x16::splat(val1.simd, 255.0).madd(val1, f32x16::splat(val1.simd, 0.5)));
+            f32_to_u8(f32x16::splat(val1.simd, 255.0).mul_add(val1, f32x16::splat(val1.simd, 0.5)));
         let val2 =
-            f32_to_u8(f32x16::splat(val2.simd, 255.0).madd(val2, f32x16::splat(val2.simd, 0.5)));
+            f32_to_u8(f32x16::splat(val2.simd, 255.0).mul_add(val2, f32x16::splat(val2.simd, 0.5)));
 
         val1.simd.combine_u8x16(val1, val2)
     };
@@ -726,7 +757,7 @@ mod tests {
 
     #[test]
     fn pack_block_unpack_block_roundtrip() {
-        dispatch!(Level::try_detect().unwrap_or(Level::fallback()), simd => {
+        dispatch!(Level::try_detect().unwrap_or(Level::baseline()), simd => {
             test_pack_unpack_roundtrip(
                 |region, buf| simd.vectorize(|| pack_block(simd, region, buf)),
                 |region, buf| simd.vectorize(|| unpack_block(simd, region, buf)),

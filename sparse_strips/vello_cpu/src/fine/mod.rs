@@ -36,7 +36,7 @@ use vello_common::fearless_simd::{
 use vello_common::filter_effects::Filter;
 use vello_common::kurbo::Affine;
 use vello_common::mask::Mask;
-use vello_common::paint::{ImageSource, Paint, PremulColor};
+use vello_common::paint::{ImageResolver, ImageSource, Paint, PremulColor, Tint};
 use vello_common::pixmap::Pixmap;
 use vello_common::simd::Splat4thExt;
 use vello_common::tile::Tile;
@@ -113,7 +113,7 @@ impl<S: Simd> NumericVec<S> for u8x16<S> {
     fn from_f32(simd: S, val: f32x16<S>) -> Self {
         let v1 = f32x16::splat(simd, 255.0);
         let v2 = f32x16::splat(simd, 0.5);
-        let mulled = val.madd(v1, v2);
+        let mulled = val.mul_add(v1, v2);
 
         f32_to_u8(mulled)
     }
@@ -177,7 +177,7 @@ impl<S: Simd> CompositeType<f32, S> for f32x16<S> {
 
     #[inline(always)]
     fn from_slice(simd: S, slice: &[f32]) -> Self {
-        <Self as SimdBase<_, _>>::from_slice(simd, slice)
+        <Self as SimdBase<_>>::from_slice(simd, slice)
     }
 
     #[inline(always)]
@@ -191,7 +191,7 @@ impl<S: Simd> CompositeType<u8, S> for u8x32<S> {
 
     #[inline(always)]
     fn from_slice(simd: S, slice: &[u8]) -> Self {
-        <Self as SimdBase<_, _>>::from_slice(simd, slice)
+        <Self as SimdBase<_>>::from_slice(simd, slice)
     }
 
     #[inline(always)]
@@ -397,6 +397,13 @@ pub trait FineKernel<S: Simd>: Send + Sync + 'static {
     /// Invokes the painter to generate pixel values and writes them to the destination.
     fn apply_painter<'a>(simd: S, dest: &mut [Self::Numeric], painter: impl Painter + 'a);
 
+    /// Apply an image tint to an already-painted buffer.
+    ///
+    /// This is called as a post-pass after `apply_painter`, only when a tint is
+    /// present. Keeping tint application out of the per-pixel iterator avoids
+    /// regressing the non-tinted fast path.
+    fn apply_tint(simd: S, dest: &mut [Self::Numeric], tint: &Tint);
+
     /// Perform alpha compositing with a solid color over the target buffer.
     ///
     /// Blends a solid RGBA color over the existing contents using standard alpha compositing
@@ -536,6 +543,7 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
         cmd: &Cmd,
         alphas: &[u8],
         paints: &[EncodedPaint],
+        image_resolver: &dyn ImageResolver,
         attrs: &CommandAttrs,
     ) {
         match cmd {
@@ -547,6 +555,7 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
                     &fill_attrs.paint,
                     fill_attrs.blend_mode,
                     paints,
+                    image_resolver,
                     None,
                     fill_attrs.mask.as_ref(),
                 );
@@ -560,6 +569,7 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
                     &fill_attrs.paint,
                     fill_attrs.blend_mode,
                     paints,
+                    image_resolver,
                     Some(&alphas[alpha_idx..]),
                     fill_attrs.mask.as_ref(),
                 );
@@ -572,7 +582,7 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
                 // color matrix, component transfer) can be processed here directly on the
                 // blend buffer per-pixel as wide commands.
             }
-            Cmd::PushBuf(_layer_kind) => {
+            Cmd::PushBuf(_layer_kind, _) => {
                 self.blend_buf.push([T::Numeric::ZERO; SCRATCH_BUF_SIZE]);
             }
             Cmd::PopBuf => {
@@ -661,6 +671,7 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
         fill: &Paint,
         blend_mode: BlendMode,
         encoded_paints: &[EncodedPaint],
+        image_resolver: &dyn ImageResolver,
         alphas: Option<&[u8]>,
         mask: Option<&Mask>,
     ) {
@@ -715,8 +726,14 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
                 // we would have to repeatedly provide all arguments if we made it a function.
                 macro_rules! fill_complex_paint {
                     ($may_have_opacities:expr, $filler:expr) => {
+                        fill_complex_paint!($may_have_opacities, $filler, None::<&Tint>)
+                    };
+                    ($may_have_opacities:expr, $filler:expr, $tint:expr) => {
                         if $may_have_opacities || alphas.is_some() {
                             T::apply_painter(self.simd, color_buf, $filler);
+                            if let Some(t) = $tint {
+                                T::apply_tint(self.simd, color_buf, t);
+                            }
 
                             if default_blend && mask.is_none() {
                                 T::alpha_composite_buffer(self.simd, blend_buf, color_buf, alphas);
@@ -738,6 +755,9 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
                             // Similarly to solid colors we can just override the previous values
                             // if all colors in the gradient are fully opaque.
                             T::apply_painter(self.simd, blend_buf, $filler);
+                            if let Some(t) = $tint {
+                                T::apply_tint(self.simd, blend_buf, t);
+                            }
                         }
                     };
                 }
@@ -813,9 +833,14 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
                         }
                     }
                     EncodedPaint::Image(i) => {
-                        let ImageSource::Pixmap(pixmap) = &i.source else {
-                            panic!("vello_cpu doesn't support the opaque image source.");
+                        let pixmap = match &i.source {
+                            ImageSource::Pixmap(p) => p.clone(),
+                            ImageSource::OpaqueId { id, .. } => image_resolver
+                                .resolve(*id)
+                                .unwrap_or_else(|| panic!("Image {:?} not found in registry", id)),
                         };
+
+                        let tint = i.tint.as_ref();
 
                         match (i.has_skew(), i.nearest_neighbor()) {
                             (false, false) => {
@@ -824,15 +849,17 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
                                     fill_complex_paint!(
                                         i.may_have_opacities,
                                         T::plain_medium_quality_image_painter(
-                                            self.simd, i, pixmap, start_x, start_y
-                                        )
+                                            self.simd, i, &pixmap, start_x, start_y
+                                        ),
+                                        tint
                                     );
                                 } else {
                                     fill_complex_paint!(
                                         i.may_have_opacities,
                                         T::high_quality_image_painter(
-                                            self.simd, i, pixmap, start_x, start_y
-                                        )
+                                            self.simd, i, &pixmap, start_x, start_y
+                                        ),
+                                        tint
                                     );
                                 }
                             }
@@ -842,15 +869,17 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
                                     fill_complex_paint!(
                                         i.may_have_opacities,
                                         T::medium_quality_image_painter(
-                                            self.simd, i, pixmap, start_x, start_y
-                                        )
+                                            self.simd, i, &pixmap, start_x, start_y
+                                        ),
+                                        tint
                                     );
                                 } else {
                                     fill_complex_paint!(
                                         i.may_have_opacities,
                                         T::high_quality_image_painter(
-                                            self.simd, i, pixmap, start_x, start_y
-                                        )
+                                            self.simd, i, &pixmap, start_x, start_y
+                                        ),
+                                        tint
                                     );
                                 }
                             }
@@ -858,14 +887,16 @@ impl<S: Simd, T: FineKernel<S>> Fine<S, T> {
                                 fill_complex_paint!(
                                     i.may_have_opacities,
                                     T::plain_nn_image_painter(
-                                        self.simd, i, pixmap, start_x, start_y
-                                    )
+                                        self.simd, i, &pixmap, start_x, start_y
+                                    ),
+                                    tint
                                 );
                             }
                             (true, true) => {
                                 fill_complex_paint!(
                                     i.may_have_opacities,
-                                    T::nn_image_painter(self.simd, i, pixmap, start_x, start_y)
+                                    T::nn_image_painter(self.simd, i, &pixmap, start_x, start_y),
+                                    tint
                                 );
                             }
                         }
@@ -956,7 +987,7 @@ impl<S: Simd> PosExt<S> for f32x4<S> {
         let columns: [f32; Tile::HEIGHT as usize] = [0.0, 1.0, 2.0, 3.0];
         let column_mask: Self = columns.simd_into(simd);
 
-        column_mask.madd(Self::splat(simd, y_advance), Self::splat(simd, pos))
+        column_mask.mul_add(Self::splat(simd, y_advance), Self::splat(simd, pos))
     }
 }
 

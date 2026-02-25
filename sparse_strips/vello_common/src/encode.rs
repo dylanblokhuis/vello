@@ -8,7 +8,7 @@ use crate::color::palette::css::BLACK;
 use crate::color::{ColorSpaceTag, HueDirection, Srgb, gradient};
 use crate::kurbo::{Affine, Point, Vec2};
 use crate::math::{FloatExt, compute_erf7};
-use crate::paint::{Image, ImageSource, IndexedPaint, Paint, PremulColor};
+use crate::paint::{Image, ImageSource, IndexedPaint, Paint, PremulColor, Tint};
 use crate::peniko::{ColorStop, ColorStops, Extend, Gradient, GradientKind, ImageQuality};
 use alloc::borrow::Cow;
 use alloc::fmt::Debug;
@@ -50,16 +50,26 @@ fn exp(val: f32) -> f32 {
     compile_error!("vello_common requires either the `std` or `libm` feature");
 }
 
-/// A trait for encoding gradients.
+/// A trait for encoding paints.
 pub trait EncodeExt: private::Sealed {
-    /// Encode the gradient and push it into a vector of encoded paints, returning
-    /// the corresponding paint in the process. This will also validate the gradient.
-    fn encode_into(&self, paints: &mut Vec<EncodedPaint>, transform: Affine) -> Paint;
+    /// Encode the paint and push it into a vector of encoded paints, returning
+    /// the corresponding paint in the process. This will also validate the paint.
+    fn encode_into(
+        &self,
+        paints: &mut Vec<EncodedPaint>,
+        transform: Affine,
+        tint: Option<Tint>,
+    ) -> Paint;
 }
 
 impl EncodeExt for Gradient {
     /// Encode the gradient into a paint.
-    fn encode_into(&self, paints: &mut Vec<EncodedPaint>, transform: Affine) -> Paint {
+    fn encode_into(
+        &self,
+        paints: &mut Vec<EncodedPaint>,
+        transform: Affine,
+        _tint: Option<Tint>,
+    ) -> Paint {
         // First make sure that the gradient is valid and not degenerate.
         if let Err(paint) = validate(self) {
             return paint;
@@ -467,7 +477,12 @@ pub(crate) fn x_y_advances(transform: &Affine) -> (Vec2, Vec2) {
 impl private::Sealed for Image {}
 
 impl EncodeExt for Image {
-    fn encode_into(&self, paints: &mut Vec<EncodedPaint>, transform: Affine) -> Paint {
+    fn encode_into(
+        &self,
+        paints: &mut Vec<EncodedPaint>,
+        transform: Affine,
+        tint: Option<Tint>,
+    ) -> Paint {
         let idx = paints.len();
 
         let mut sampler = self.sampler;
@@ -498,25 +513,18 @@ impl EncodeExt for Image {
 
         let (x_advance, y_advance) = x_y_advances(&transform);
 
-        let encoded = match &self.image {
-            ImageSource::Pixmap(pixmap) => EncodedImage {
-                source: ImageSource::Pixmap(pixmap.clone()),
-                sampler,
-                may_have_opacities: pixmap.may_have_opacities(),
-                transform,
-                x_advance,
-                y_advance,
-            },
-            ImageSource::OpaqueId(image) => EncodedImage {
-                source: ImageSource::OpaqueId(*image),
-                sampler,
-                // Safe fallback: we don't have access to pixel data for externally
-                // registered images, so we conservatively assume they have opacities.
-                may_have_opacities: true,
-                transform,
-                x_advance,
-                y_advance,
-            },
+        // If the tint color has alpha < 1.0, the image will have opacities
+        // even if the source pixels are all opaque.
+        let tint_has_opacity = tint.as_ref().is_some_and(|t| t.color.components[3] < 1.0);
+
+        let encoded = EncodedImage {
+            may_have_opacities: self.image.may_have_opacities() || tint_has_opacity,
+            source: self.image.clone(),
+            sampler,
+            transform,
+            x_advance,
+            y_advance,
+            tint,
         };
 
         paints.push(EncodedPaint::Image(encoded));
@@ -563,6 +571,8 @@ pub struct EncodedImage {
     pub x_advance: Vec2,
     /// The advance in image coordinates for one step in the y direction.
     pub y_advance: Vec2,
+    /// Optional tint applied to the image.
+    pub tint: Option<Tint>,
 }
 
 /// Computed properties of a linear gradient.
@@ -832,7 +842,12 @@ pub struct EncodedBlurredRoundedRectangle {
 impl private::Sealed for BlurredRoundedRectangle {}
 
 impl EncodeExt for BlurredRoundedRectangle {
-    fn encode_into(&self, paints: &mut Vec<EncodedPaint>, transform: Affine) -> Paint {
+    fn encode_into(
+        &self,
+        paints: &mut Vec<EncodedPaint>,
+        transform: Affine,
+        _tint: Option<Tint>,
+    ) -> Paint {
         let rect = {
             // Ensure rectangle has positive width/height.
             let mut rect = self.rect;
@@ -954,7 +969,7 @@ impl FromF32Color for u8 {
 
     fn from_f32<S: Simd>(mut color: f32x4<S>) -> [Self; 4] {
         let simd = color.simd;
-        color = color.madd(f32x4::splat(simd, 255.0), f32x4::splat(simd, 0.5));
+        color = color.mul_add(f32x4::splat(simd, 255.0), f32x4::splat(simd, 0.5));
 
         [
             color[0] as Self,
@@ -1009,11 +1024,11 @@ impl<T: FromF32Color> GradientLut<T> {
             let scales = f32x16::block_splat(f32x4::from_slice(simd, &range.scale));
 
             ramp_range.clone().step_by(4).for_each(|idx| {
-                let t_vals = f32x4::splat(simd, idx as f32).madd(inv_lut_scale, add_factor);
+                let t_vals = f32x4::splat(simd, idx as f32).mul_add(inv_lut_scale, add_factor);
 
                 let t_vals = element_wise_splat(simd, t_vals);
 
-                let mut result = scales.madd(t_vals, biases);
+                let mut result = scales.mul_add(t_vals, biases);
                 let alphas = result.splat_4th();
                 // Premultiply colors, since we did interpolation in unpremultiplied space.
                 if range.interpolation_alpha_space == InterpolationAlphaSpace::Unpremultiplied {
@@ -1157,7 +1172,7 @@ mod tests {
         };
 
         assert_eq!(
-            gradient.encode_into(&mut buf, Affine::IDENTITY),
+            gradient.encode_into(&mut buf, Affine::IDENTITY, None),
             BLACK.into()
         );
     }
@@ -1181,7 +1196,7 @@ mod tests {
 
         // Should return the color of the first stop.
         assert_eq!(
-            gradient.encode_into(&mut buf, Affine::IDENTITY),
+            gradient.encode_into(&mut buf, Affine::IDENTITY, None),
             GREEN.into()
         );
     }
@@ -1210,7 +1225,7 @@ mod tests {
         };
 
         assert_eq!(
-            gradient.encode_into(&mut buf, Affine::IDENTITY),
+            gradient.encode_into(&mut buf, Affine::IDENTITY, None),
             GREEN.into()
         );
     }
@@ -1239,7 +1254,7 @@ mod tests {
         };
 
         assert_eq!(
-            gradient.encode_into(&mut buf, Affine::IDENTITY),
+            gradient.encode_into(&mut buf, Affine::IDENTITY, None),
             GREEN.into()
         );
     }
@@ -1270,7 +1285,7 @@ mod tests {
         };
 
         assert_eq!(
-            gradient.encode_into(&mut buf, Affine::IDENTITY),
+            gradient.encode_into(&mut buf, Affine::IDENTITY, None),
             GREEN.into()
         );
     }
