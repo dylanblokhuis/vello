@@ -334,7 +334,7 @@ impl WgpuEngine {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
@@ -362,7 +362,7 @@ impl WgpuEngine {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: self.pipeline_cache.as_ref(),
         });
         let id = self.shaders.len();
@@ -375,7 +375,7 @@ impl WgpuEngine {
             label,
         });
         ShaderId(id)
-    }    
+    }
 
     /// Runs the recording into the given command encoder without submitting.
     ///
@@ -743,6 +743,7 @@ impl WgpuEngine {
                         depth_stencil_attachment: None,
                         occlusion_query_set: None,
                         timestamp_writes: None,
+                        multiview_mask: None,
                     });
                     #[cfg(feature = "wgpu-profiler")]
                     let query = profiler
@@ -910,7 +911,7 @@ impl WgpuEngine {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: None,
                 bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
+                immediate_size: 0,
             });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some(label),
